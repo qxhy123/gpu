@@ -19,9 +19,27 @@ python examples/vector_add/run.py
 
 ## Run a kernel and inspect the report
 ```bash
+# Option 1: Python API (no .npy files needed)
+python -c "
+import numpy as np, gpusim, pathlib
+n = 1024
+a = np.random.randn(n).astype(np.float32)
+b = np.random.randn(n).astype(np.float32)
+c = np.zeros(n, dtype=np.float32)
+ptx = pathlib.Path('examples/vector_add/kernel.ptx').read_text()
+res = gpusim.run(ptx_src=ptx, grid=(8,1,1), block=(128,1,1),
+                 params={'A':a,'B':b,'C':c,'N':n}, mode='timing')
+res.html_report('report.html')
+res.perfetto('trace.json')
+print(res.summary())
+"
+
+# Option 2: CLI (after staging .npy inputs)
+python -c "import numpy as np; np.save('a.npy', np.random.randn(1024).astype(np.float32)); np.save('b.npy', np.random.randn(1024).astype(np.float32)); np.save('c.npy', np.zeros(1024, dtype=np.float32))"
 gpusim run examples/vector_add/kernel.ptx \
     --grid 8 --block 128 \
     --inputs A:a.npy,B:b.npy,C:c.npy,N:1024 \
+    --mode timing \
     --output report.html --perfetto trace.json
 ```
 - `report.html` — open in any browser

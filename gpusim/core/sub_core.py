@@ -35,6 +35,7 @@ class SubCore:
     cfg: SMConfig
     executor: InstrExecutor
     warps: list[Warp]
+    recorder: object | None = None
 
     def __post_init__(self):
         self.fus = FUSet(self.cfg.fu)
@@ -82,6 +83,13 @@ class SubCore:
         chosen = self.scheduler.pick(now, candidates=lambda i: ready_flags[i] is StallReason.ISSUED)
         for i in range(len(self.warps)):
             states[i] = ready_flags[i]
+        if self.recorder is not None:
+            for i, w in enumerate(self.warps):
+                self.recorder.warp_state(
+                    cycle=now, warp_id=w.warp_id,
+                    state=states[i].value,
+                    pc=(w.stack.top().pc if w.stack and not w.stack.is_done() else -1),
+                )
         if chosen is None:
             return states
         w = self.warps[chosen]
@@ -96,9 +104,21 @@ class SubCore:
     def _issue(self, w: Warp, instr: Instr, now: int) -> None:
         op = instr.op
         if op == "bar.sync":
+            if self.recorder is not None:
+                self.recorder.instr_issue(
+                    cycle=now, warp_id=w.warp_id, pc=instr.pc, op=instr.op,
+                    src_loc=(instr.src_loc.file, instr.src_loc.line),
+                    active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                )
             w.barrier_pc = w.stack.top().pc
             return
         if op == "bra":
+            if self.recorder is not None:
+                self.recorder.instr_issue(
+                    cycle=now, warp_id=w.warp_id, pc=instr.pc, op=instr.op,
+                    src_loc=(instr.src_loc.file, instr.src_loc.line),
+                    active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                )
             target_pc = w.kernel.labels[instr.src[0]] if isinstance(instr.src[0], str) else 0
             if instr.pred is None:
                 w.stack.update_top_pc(target_pc); w.stack.maybe_pop()
@@ -106,11 +126,22 @@ class SubCore:
             from gpusim.core.exec import _resolve_branch_mask
             taken_mask = _resolve_branch_mask(w.fn_state, instr)
             rpc = w.kernel.ipdom.get(w.stack.top().pc, target_pc)
-            w.stack.diverge(taken_pc=target_pc, fallthrough_pc=w.stack.top().pc + 1,
-                            taken_mask=taken_mask, rpc=rpc)
-            w.stack.maybe_pop()
+            diverged = w.stack.diverge(taken_pc=target_pc, fallthrough_pc=w.stack.top().pc + 1,
+                                       taken_mask=taken_mask, rpc=rpc)
+            if diverged and self.recorder is not None:
+                self.recorder.div_push(cycle=now, warp_id=w.warp_id,
+                                       pc=instr.pc, rpc=rpc, taken_mask=taken_mask)
+            if w.stack.maybe_pop() and self.recorder is not None:
+                self.recorder.div_pop(cycle=now, warp_id=w.warp_id,
+                                      pc=w.stack.top().pc if not w.stack.is_done() else -1)
             return
         # functional execution
+        if self.recorder is not None:
+            self.recorder.instr_issue(
+                cycle=now, warp_id=w.warp_id, pc=instr.pc, op=instr.op,
+                src_loc=(instr.src_loc.file, instr.src_loc.line),
+                active_mask=w.fn_state.active_mask if w.fn_state else 0,
+            )
         w.fn_state.active_mask = w.stack.top().active_mask
         w.fn_state.pc = w.stack.top().pc
         ex = w.executor if w.executor is not None else self.executor
@@ -130,6 +161,11 @@ class SubCore:
                 kind = self.fus.classify(op)
                 self.fus.reserve(kind, now, extra)
                 latency += extra
+            if self.recorder is not None:
+                self.recorder.smem_access(
+                    cycle=now, warp_id=w.warp_id,
+                    conflict_degree=smem_conflict, addresses=addrs,
+                )
 
         if op.startswith(("ld.global.", "st.global.")):
             from gpusim.core.exec import global_addresses_for_warp
@@ -137,6 +173,12 @@ class SubCore:
             addrs = global_addresses_for_warp(w.fn_state, instr)
             info = coalescing_info(addrs, active_mask=w.fn_state.active_mask)
             w.last_gmem = info
+            if self.recorder is not None:
+                self.recorder.gmem_access(
+                    cycle=now, warp_id=w.warp_id,
+                    n_transactions=info.n_transactions, efficiency=info.efficiency,
+                    addresses=addrs,
+                )
 
         # operand collector bank conflict
         from gpusim.core.regfile import operand_extra_cycles

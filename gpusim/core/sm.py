@@ -21,8 +21,9 @@ class SMRunResult:
 
 
 class SM:
-    def __init__(self, cfg: SMConfig):
+    def __init__(self, cfg: SMConfig, recorder: object | None = None):
         self.cfg = cfg
+        self.recorder = recorder
 
     def run(self, kernel, grid, block, params, regs_per_thread: int = 16,
             smem_per_cta: int = 0) -> SMRunResult:
@@ -52,7 +53,7 @@ class SM:
                                  params=paramspace, cta_id=0,
                                  ctaid=(0,0,0), nctaid=grid, ntid=block)
         sub_cores: list[SubCore] = [
-            SubCore(i, self.cfg, executor, [])
+            SubCore(i, self.cfg, executor, [], recorder=self.recorder)
             for i in range(self.cfg.sub_cores)
         ]
 
@@ -80,6 +81,11 @@ class SM:
                          cta_id=cid, executor=cta_executor)
                 active_warps.append(w)
                 sub_cores[w.warp_id % self.cfg.sub_cores].warps.append(w)
+            if self.recorder is not None:
+                self.recorder.cta_launch(cycle=cycle, cta_id=cid,
+                                         warps=warps_per_cta,
+                                         regs=regs_per_thread * threads_per_cta,
+                                         smem_bytes=smem_per_cta)
             cta_pointer += 1
             return True
 
@@ -104,6 +110,8 @@ class SM:
                 if all(w.finished or (w.stack and w.stack.is_done()) for w in ws):
                     retiring.append(cid)
             for cid in retiring:
+                if self.recorder is not None:
+                    self.recorder.cta_retire(cycle=cycle, cta_id=cid)
                 smem.free_cta(cid)
                 active_warps = [w for w in active_warps if w.cta_id != cid]
                 for sc in sub_cores:

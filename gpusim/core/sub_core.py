@@ -83,6 +83,12 @@ class SubCore:
         chosen = self.scheduler.pick(now, candidates=lambda i: ready_flags[i] is StallReason.ISSUED)
         for i in range(len(self.warps)):
             states[i] = ready_flags[i]
+        # If the chosen warp is issuing under a partial mask (inside a divergent region),
+        # record DIVERGENCE_SERIAL instead of ISSUED so the trace makes the cost visible.
+        if chosen is not None:
+            cw = self.warps[chosen]
+            if cw.stack is not None and cw.stack.is_divergent():
+                states[chosen] = StallReason.DIVERGENCE_SERIAL
         if self.recorder is not None:
             for i, w in enumerate(self.warps):
                 self.recorder.warp_state(
@@ -119,7 +125,8 @@ class SubCore:
                                        gmem_transactions=gmem_n_tx)
         self.fus.reserve(kind, now, occ)
         self._issue(w, instr, now, smem_conflict=smem_conflict, gmem_n_tx=gmem_n_tx)
-        states[chosen] = StallReason.ISSUED
+        # states[chosen] was already set to ISSUED or DIVERGENCE_SERIAL before recording;
+        # leave it as-is so the return value is consistent with what was recorded.
         return states
 
     def _issue(self, w: Warp, instr: Instr, now: int,

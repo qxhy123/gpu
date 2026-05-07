@@ -50,5 +50,16 @@ class SIMTStack:
         self._stack.append(SIMTEntry(pc=taken_pc, active_mask=taken_mask, rpc=rpc))
         return True
 
+    @property
+    def depth(self) -> int:
+        return len(self._stack)
+
+    def is_divergent(self) -> bool:
+        """True if the warp is currently executing a non-full-mask (i.e., partial-mask) frame."""
+        if not self._stack:
+            return False
+        bottom_full_mask = (1 << self._warp_size) - 1
+        return self._stack[-1].active_mask != bottom_full_mask
+
     def end_warp(self) -> None:
         self._stack.clear()

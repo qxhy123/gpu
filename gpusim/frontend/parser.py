@@ -163,9 +163,18 @@ class _Parser:
         return PtxType.b32  # fallback for branches and bar.sync etc.
 
     def _parse_operands(self, op: str, ty: PtxType) -> tuple[list[Operand], list]:
-        # branches/sync handled in Task 6; arithmetic and memory here.
-        if op.startswith("bra") or op.startswith("@") or op.startswith("bar.") or op.startswith("membar"):
-            return [], list(self._parse_operand_list(ty))
+        if op == "bra" or op.endswith(".bra"):
+            # bra LABEL;
+            label = self._parse_operand(ty)
+            return [], [label]
+        if op.startswith("bar."):
+            # bar.sync N;  (N optional, default 0)
+            srcs: list = []
+            if self.peek().kind == "NUM":
+                srcs.append(self._parse_operand(PtxType.s32))
+            return [], srcs
+        if op.startswith("membar"):
+            return [], []
 
         if op.startswith("ld."):
             # ld.<space>.<ty> dst, [addr];
@@ -214,9 +223,9 @@ class _Parser:
             )
             return Imm(value=v, type=ty)
         if t.kind == "IDENT":
-            # bare identifier — likely a parameter name (used in ld.param)
+            # bare identifier: parameter name OR label (resolved later)
             self.i += 1
-            return Reg(name=t.value, type=ty)  # treat as "named" operand
+            return t.value  # plain str — caller treats as label/param
         raise ParseError(f"{t.file}:{t.line}:{t.col}: unexpected operand token {t.kind} {t.value!r}")
 
     def _parse_addr(self) -> tuple[Operand, Imm | None]:

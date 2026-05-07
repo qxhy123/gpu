@@ -25,12 +25,14 @@ Output:
 
 ```
 stride=1: cycles=422
-stride=2: cycles=422
-stride=4: cycles=422
-stride=8: cycles=422
+stride=2: cycles=423
+stride=4: cycles=425
+stride=8: cycles=429
 ```
 
-The cycle count does not change between strides in the simulator's current Phase 1 model. This is because **Phase 1 does not model bandwidth contention** — every global load has the same fixed latency regardless of how many transactions it requires. What *does* change is the coalescing analysis metric in the HTML report.
+The cycle count **does increase with stride** in the simulator's Phase 1 model. This is because the simulator scales LSU issue occupancy by `n_transactions`: a stride-1 load requires 1 transaction and occupies the LSU for 1 cycle, while a stride-8 load requires 8 transactions and occupies the LSU for 8 cycles. In addition, each extra transaction adds one cycle of result latency (to model burst completion — the last transaction completes one cycle after the one before it). For this kernel, which has a single global load per warp, the deltas are modest (422 → 423 → 425 → 429), but in a realistic kernel with many global loads the effect compounds significantly.
+
+What *also* changes is the coalescing analysis metric in the HTML report — and that is the primary teaching signal.
 
 Open `report.html` after running `STRIDE=1` vs `STRIDE=4`: the **coalescing report** section shows the number of 128-byte transactions for the `ld.global` instruction. For `STRIDE=1` you get 1 transaction for 32 threads; for `STRIDE=4` you get 4 transactions; for `STRIDE=32` (accessing every 32nd element) you get 32 transactions.
 
@@ -78,9 +80,11 @@ The general rule: **the effective stride in bytes** determines the sector span. 
 
 ## Phase 1 limitations
 
+Phase 1 models `n_transactions` as a direct LSU occupancy and latency multiplier — a simplified approximation that captures the qualitative cost of poor coalescing. Real GPUs use more complex memory pipelines: sector merging, write combining, and hardware coalescing at the L1/L2 boundary can change the effective transaction count at runtime. The Phase 1 model errs on the side of counting every transaction as a serialized LSU cycle, which overestimates the cost slightly but correctly orders the strides by cycle count.
+
 Phase 1 does not model:
 - **Bandwidth contention** — multiple CTAs competing for the same DRAM channels.
 - **L1/L2 cache** — in reality, coalesced accesses often hit the L1 cache after the first pass, dramatically reducing effective transactions.
 - **Hardware prefetching** — real GPUs prefetch ahead of demand loads.
 
-The coalescing metric in Phase 1 is purely analytical: it counts transactions from address patterns, not from a bandwidth model. Phase 2 will add a cache hierarchy and bandwidth queue, at which point cycle counts will actually reflect coalescing efficiency.
+The `n_transactions` LSU occupancy scaling is documented in Spec §11/§12 as the Phase 1 trade-off. Phase 2 will refine this with a full cache hierarchy and bandwidth queue, at which point cycle counts will more accurately reflect memory system behavior.

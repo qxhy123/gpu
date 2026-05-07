@@ -27,6 +27,10 @@ def run(
     grid: str = typer.Option(..., "--grid"),
     block: str = typer.Option(..., "--block"),
     inputs: str = typer.Option(None, "--inputs"),
+    config: Path = typer.Option(None, "--config"),
+    output: Path = typer.Option(None, "--output"),
+    perfetto: Path = typer.Option(None, "--perfetto"),
+    trace: Path = typer.Option(None, "--trace"),
     mode: str = typer.Option("functional", "--mode"),
     seed: int = typer.Option(0, "--seed"),
 ):
@@ -45,12 +49,33 @@ def run(
             # scalar int param
             params[name] = int(path)
     src = kernel.read_text()
-    res = api_run(ptx_src=src, grid=g, block=b, params=params, mode=mode, seed=seed)
+    res = api_run(ptx_src=src, grid=g, block=b, params=params, mode=mode,
+                  config=config, seed=seed)
     typer.echo(res.summary())
     # save back numpy arrays so caller can inspect them
     for name, p in np_paths.items():
         if name in res.outputs:
             np.save(p, res.outputs[name])
+    if output:
+        res.html_report(output)
+    if perfetto:
+        res.perfetto(perfetto)
+    if trace and res._recorder is not None:
+        from gpusim.trace.writer import write_parquet
+        write_parquet(res._recorder, trace)
+
+
+@app.command()
+def explain(report: Path):
+    """Grep cycles + bottleneck out of an HTML report."""
+    text = report.read_text()
+    import re
+    m = re.search(r"Cycles</th><td>(\d+)</td>", text)
+    if m:
+        typer.echo(f"cycles: {m.group(1)}")
+    m2 = re.search(r"Bottleneck</th><td>(\w+)</td>", text)
+    if m2:
+        typer.echo(f"bottleneck: {m2.group(1)}")
 
 
 @app.command()

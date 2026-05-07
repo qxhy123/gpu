@@ -247,4 +247,9 @@ class _Parser:
 
 def parse(src: str, file: str = "<input>") -> Kernel:
     p = _Parser(src, file)
-    return p.parse_kernel()
+    k = p.parse_kernel()
+    from .ipdom import compute_ipdom
+    return Kernel(
+        name=k.name, params=k.params, regs=k.regs, instrs=k.instrs,
+        labels=k.labels, ipdom=compute_ipdom(k),
+    )

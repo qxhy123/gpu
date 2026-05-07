@@ -31,4 +31,18 @@ def run(*, ptx_src: str | None = None, ptx_path: str | Path | None = None,
     if mode == "functional":
         functional_run(ptx_src, params=params, grid=grid, block=block)
         return Result(outputs=outputs, mode="functional", metrics={})
+    if mode == "timing":
+        from gpusim.frontend.parser import parse
+        from gpusim.config.loader import load_default, load_yaml
+        from gpusim.core.sm import SM
+        cfg = load_default() if config is None else (
+            load_yaml(config) if isinstance(config, (str, Path)) else config
+        )
+        k = parse(ptx_src, "<inline>")
+        sm = SM(cfg)
+        res = sm.run(kernel=k, grid=grid, block=block, params=params)
+        return Result(
+            outputs=res.outputs, mode="timing",
+            metrics={"cycles": res.cycles},
+        )
     raise NotImplementedError(f"mode={mode!r} not implemented yet")

@@ -29,3 +29,6 @@ class Warp:
     barrier_pc: int = -1
     finished: bool = False
     cta_id: int = 0
+    last_gmem: object | None = None
+    outstanding_loads: list[int] = field(default_factory=list)
+    last_operand_extra: int = 0

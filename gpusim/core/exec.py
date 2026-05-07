@@ -419,6 +419,42 @@ def _step_warp(kernel: Kernel, w: WarpFnState, ex: InstrExecutor,
     return False
 
 
+def shared_addresses_for_warp(w: WarpFnState, instr: Instr) -> list[int]:
+    """Compute per-lane absolute byte offsets for a shared ld/st instr."""
+    addrs: list[int] = [0] * w.warp_size
+    for lane in range(w.warp_size):
+        if not (w.active_mask >> lane) & 1:
+            addrs[lane] = -1
+            continue
+        t = w.threads[lane]
+        base_op = instr.src[0]
+        if isinstance(base_op, Reg):
+            base = t.get_u64(base_op.name)
+        else:
+            base = int(getattr(base_op, "value", 0))
+        off = 0
+        if len(instr.src) > 1 and isinstance(instr.src[1], Imm):
+            off = int(instr.src[1].value)
+        addrs[lane] = (base + off) & 0xFFFFFFFF
+    return addrs
+
+
+def global_addresses_for_warp(w: WarpFnState, instr: Instr) -> list[int]:
+    addrs: list[int] = [0] * w.warp_size
+    for lane in range(w.warp_size):
+        if not (w.active_mask >> lane) & 1:
+            addrs[lane] = -1
+            continue
+        t = w.threads[lane]
+        base_op = instr.src[0]
+        base = t.get_u64(base_op.name) if isinstance(base_op, Reg) else int(getattr(base_op, "value", 0))
+        off = 0
+        if len(instr.src) > 1 and isinstance(instr.src[1], Imm):
+            off = int(instr.src[1].value)
+        addrs[lane] = base + off
+    return addrs
+
+
 def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
                    grid: tuple[int,int,int], block: tuple[int,int,int]) -> None:
     """Run kernel functionally over the grid. Mutates numpy arrays in `params` in place."""

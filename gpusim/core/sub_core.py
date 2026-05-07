@@ -53,8 +53,19 @@ class SubCore:
             w.finished = True
             return False, StallReason.IDLE
         instr = w.kernel.instrs[pc]
+        # bar.sync must drain the LSU (shared mem conflict cycles must complete)
+        if instr.op == "bar.sync":
+            if not self.fus.is_free(FUKind.LSU, now):
+                return False, StallReason.STRUCTURAL
+        # LSU outstanding queue
+        if instr.op.startswith("ld.global.") or instr.op.startswith("st.global."):
+            w.outstanding_loads = [c for c in w.outstanding_loads if c > now]
+            if len(w.outstanding_loads) >= self.cfg.fu.lsu_outstanding:
+                return False, StallReason.STRUCTURAL
         for r in _src_regs(instr):
             if w.scoreboard.has_pending(r, now):
+                if w.scoreboard.origin_of(r) == "mem":
+                    return False, StallReason.MEM_DEP
                 return False, StallReason.SCOREBOARD
         kind = self.fus.classify(instr.op)
         if not self.fus.is_free(kind, now):
@@ -98,12 +109,52 @@ class SubCore:
                             taken_mask=taken_mask, rpc=rpc)
             w.stack.maybe_pop()
             return
+        # functional execution
         w.fn_state.active_mask = w.stack.top().active_mask
         w.fn_state.pc = w.stack.top().pc
         self.executor.execute(w.fn_state, instr)
+
+        # determine issue occupancy / latency adjustments
         latency = self.fus.result_latency(op)
+        if op.startswith(("ld.shared.", "st.shared.")):
+            from gpusim.core.exec import shared_addresses_for_warp
+            from gpusim.core.smem import bank_conflict_degree
+            addrs = shared_addresses_for_warp(w.fn_state, instr)
+            mask = w.fn_state.active_mask
+            smem_conflict = bank_conflict_degree(
+                addrs, active_mask=mask, banks=self.cfg.smem_banks)
+            extra = smem_conflict - 1
+            if extra > 0:
+                kind = self.fus.classify(op)
+                self.fus.reserve(kind, now, extra)
+                latency += extra
+
+        if op.startswith(("ld.global.", "st.global.")):
+            from gpusim.core.exec import global_addresses_for_warp
+            from gpusim.core.gmem import coalescing_info
+            addrs = global_addresses_for_warp(w.fn_state, instr)
+            info = coalescing_info(addrs, active_mask=w.fn_state.active_mask)
+            w.last_gmem = info
+
+        # operand collector bank conflict
+        from gpusim.core.regfile import operand_extra_cycles
+        srcs = _src_regs(instr)
+        op_extra = operand_extra_cycles(srcs, banks=self.cfg.regfile.banks)
+        if op_extra > 0:
+            kind = self.fus.classify(op)
+            self.fus.reserve(kind, now, op_extra)
+            latency += op_extra
+            w.last_operand_extra = op_extra
+
+        # mark dst regs in scoreboard
         if latency > 0:
+            origin = "mem" if op.startswith(("ld.global.", "ld.shared.", "ld.param.")) else "alu"
             for d in _dst_regs(instr):
-                w.scoreboard.mark_write(d, now + latency)
+                w.scoreboard.mark_write(d, now + latency, origin=origin)
+        # register outstanding gmem load
+        if op.startswith("ld.global."):
+            w.outstanding_loads.append(now + latency)
+
+        # advance PC
         w.stack.update_top_pc(w.stack.top().pc + 1)
         w.stack.maybe_pop()

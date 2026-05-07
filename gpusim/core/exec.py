@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
+import struct
 import numpy as np
 
 
@@ -46,3 +47,83 @@ class WarpFnState:
             self.threads = [ThreadState() for _ in range(self.warp_size)]
         if self.active_mask == 0:
             self.active_mask = (1 << self.warp_size) - 1
+
+
+class GlobalMemory:
+    """Flat byte-addressable global memory. Each `bind`-ed numpy array gets a base
+    address and shares storage with the underlying buffer."""
+
+    def __init__(self):
+        self._next_base = 0x1_0000_0000  # arbitrary base above 32-bit imm range
+        self._segments: dict[int, np.ndarray] = {}   # base -> buffer (1d uint8 view)
+        self._names: dict[str, int] = {}
+
+    def bind(self, name: str, arr: np.ndarray) -> int:
+        view = arr.view(np.uint8).reshape(-1)
+        base = self._next_base
+        self._segments[base] = view
+        self._names[name] = base
+        # advance, aligned to 256 bytes
+        self._next_base += (view.nbytes + 255) & ~255
+        return base
+
+    def address_of(self, name: str) -> int:
+        return self._names[name]
+
+    def _seg_for(self, addr: int) -> tuple[np.ndarray, int]:
+        # find segment whose base <= addr < base + size
+        for base, buf in self._segments.items():
+            if base <= addr < base + buf.nbytes:
+                return buf, addr - base
+        raise ValueError(f"unbound global address 0x{addr:x}")
+
+    def load_f32(self, addr: int) -> float:
+        buf, off = self._seg_for(addr)
+        return float(buf[off:off+4].view(np.float32)[0])
+
+    def store_f32(self, addr: int, v: float) -> None:
+        buf, off = self._seg_for(addr)
+        buf[off:off+4].view(np.float32)[0] = np.float32(v)
+
+    def load_u32(self, addr: int) -> int:
+        buf, off = self._seg_for(addr)
+        return int(buf[off:off+4].view(np.uint32)[0])
+
+    def store_u32(self, addr: int, v: int) -> None:
+        buf, off = self._seg_for(addr)
+        buf[off:off+4].view(np.uint32)[0] = np.uint32(v & 0xFFFFFFFF)
+
+
+class SharedMemory:
+    def __init__(self, size_bytes: int = 48 * 1024):
+        self.size_bytes = size_bytes
+        self._cta: dict[int, np.ndarray] = {}
+
+    def allocate_cta(self, cta_id: int, size_bytes: int) -> None:
+        self._cta[cta_id] = np.zeros(size_bytes, dtype=np.uint8)
+
+    def free_cta(self, cta_id: int) -> None:
+        self._cta.pop(cta_id, None)
+
+    def load_f32(self, cta_id: int, offset: int) -> float:
+        return float(self._cta[cta_id][offset:offset+4].view(np.float32)[0])
+
+    def store_f32(self, cta_id: int, offset: int, value: float) -> None:
+        self._cta[cta_id][offset:offset+4].view(np.float32)[0] = np.float32(value)
+
+    def load_u32(self, cta_id: int, offset: int) -> int:
+        return int(self._cta[cta_id][offset:offset+4].view(np.uint32)[0])
+
+    def store_u32(self, cta_id: int, offset: int, value: int) -> None:
+        self._cta[cta_id][offset:offset+4].view(np.uint32)[0] = np.uint32(value & 0xFFFFFFFF)
+
+
+class ParamSpace:
+    def __init__(self, params: dict[str, int]):
+        self._params = dict(params)
+
+    def read_u64(self, name: str) -> int:
+        return int(self._params[name])
+
+    def read_u32(self, name: str) -> int:
+        return int(self._params[name]) & 0xFFFFFFFF

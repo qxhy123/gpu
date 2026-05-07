@@ -43,6 +43,6 @@ def run(*, ptx_src: str | None = None, ptx_path: str | Path | None = None,
         res = sm.run(kernel=k, grid=grid, block=block, params=params)
         return Result(
             outputs=res.outputs, mode="timing",
-            metrics={"cycles": res.cycles},
+            metrics={"cycles": res.cycles, "occupancy": res.occupancy},
         )
     raise NotImplementedError(f"mode={mode!r} not implemented yet")

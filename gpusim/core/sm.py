@@ -17,14 +17,15 @@ class SMRunResult:
     cycles: int
     outputs: dict[str, np.ndarray] = field(default_factory=dict)
     events: list[Any] = field(default_factory=list)
+    occupancy: dict[str, int] | None = None
 
 
 class SM:
     def __init__(self, cfg: SMConfig):
         self.cfg = cfg
 
-    def run(self, kernel: Kernel, grid: tuple[int,int,int], block: tuple[int,int,int],
-            params: dict[str, np.ndarray | int]) -> SMRunResult:
+    def run(self, kernel, grid, block, params, regs_per_thread: int = 16,
+            smem_per_cta: int = 0) -> SMRunResult:
         gmem = GlobalMemory()
         smem = SharedMemory(size_bytes=self.cfg.smem_per_sm_bytes)
         p_dict: dict[str, int] = {}
@@ -37,51 +38,86 @@ class SM:
 
         threads_per_cta = block[0] * block[1] * block[2]
         warps_per_cta = (threads_per_cta + 31) // 32
+        from gpusim.core.occupancy import compute_occupancy
+        occ = compute_occupancy(self.cfg, threads_per_cta, regs_per_thread, smem_per_cta)
 
-        cycles_total = 0
+        cta_queue: list[tuple[int, tuple[int,int,int]]] = []
         for cz in range(grid[2]):
-          for cy in range(grid[1]):
-            for cx in range(grid[0]):
-                cta_id = cx + cy * grid[0] + cz * grid[0] * grid[1]
-                smem.allocate_cta(cta_id, self.cfg.smem_per_sm_bytes)
-                cycles_total += self._run_cta(kernel, gmem, smem, paramspace,
-                                              cta_id, (cx,cy,cz),
-                                              grid, block, warps_per_cta)
-                smem.free_cta(cta_id)
+            for cy in range(grid[1]):
+                for cx in range(grid[0]):
+                    cid = cx + cy * grid[0] + cz * grid[0] * grid[1]
+                    cta_queue.append((cid, (cx, cy, cz)))
 
-        outputs = {n: v for n, v in params.items() if isinstance(v, np.ndarray)}
-        return SMRunResult(cycles=cycles_total, outputs=outputs)
-
-    def _run_cta(self, kernel, gmem, smem, paramspace,
-                 cta_id, ctaid, grid, block, warps_per_cta) -> int:
         executor = InstrExecutor(kernel=kernel, gmem=gmem, smem=smem,
-                                 params=paramspace, cta_id=cta_id, ctaid=ctaid,
-                                 nctaid=grid, ntid=block)
-        all_warps: list[Warp] = []
-        for wid in range(warps_per_cta):
-            tids = tuple(range(wid*32, wid*32+32))
-            fn = WarpFnState(warp_size=32, tids=tids)
-            all_warps.append(Warp(warp_id=wid, kernel=kernel, fn_state=fn,
-                                  stack=SIMTStack(warp_size=32, entry_pc=0),
-                                  cta_id=cta_id))
-        groups: list[list[Warp]] = [[] for _ in range(self.cfg.sub_cores)]
-        for w in all_warps:
-            groups[w.warp_id % self.cfg.sub_cores].append(w)
-        sub_cores = [SubCore(i, self.cfg, executor, groups[i])
-                     for i in range(self.cfg.sub_cores)]
+                                 params=paramspace, cta_id=0,
+                                 ctaid=(0,0,0), nctaid=grid, ntid=block)
+        sub_cores: list[SubCore] = [
+            SubCore(i, self.cfg, executor, [])
+            for i in range(self.cfg.sub_cores)
+        ]
 
+        active_warps: list[Warp] = []
         cycle = 0
+        cta_pointer = 0
+
+        def _activate_next_cta() -> bool:
+            nonlocal cta_pointer
+            if cta_pointer >= len(cta_queue): return False
+            current_ctas = len({w.cta_id for w in active_warps})
+            if current_ctas >= occ.active_ctas: return False
+            cid, ctaid_xyz = cta_queue[cta_pointer]
+            # Allocate at least smem_per_sm_bytes so shared-mem ops always have
+            # a valid backing buffer, even when smem_per_cta is 0.
+            alloc_bytes = smem_per_cta if smem_per_cta > 0 else self.cfg.smem_per_sm_bytes
+            smem.allocate_cta(cid, alloc_bytes)
+            cta_executor = InstrExecutor(kernel=kernel, gmem=gmem, smem=smem,
+                                         params=paramspace, cta_id=cid,
+                                         ctaid=ctaid_xyz, nctaid=grid, ntid=block)
+            for wid_in_cta in range(warps_per_cta):
+                fn = WarpFnState(warp_size=32, tids=tuple(range(wid_in_cta*32, wid_in_cta*32+32)))
+                w = Warp(warp_id=cid * warps_per_cta + wid_in_cta, kernel=kernel,
+                         fn_state=fn, stack=SIMTStack(warp_size=32, entry_pc=0),
+                         cta_id=cid, executor=cta_executor)
+                active_warps.append(w)
+                sub_cores[w.warp_id % self.cfg.sub_cores].warps.append(w)
+            cta_pointer += 1
+            return True
+
+        while _activate_next_cta(): pass
+
         while True:
             for sc in sub_cores:
                 sc.step(now=cycle)
-            non_done = [w for w in all_warps if not w.finished]
-            if non_done and all(w.barrier_pc >= 0 for w in non_done):
-                for w in non_done:
-                    w.stack.update_top_pc(w.barrier_pc + 1); w.stack.maybe_pop()
-                    w.barrier_pc = -1
+
+            by_cta: dict[int, list[Warp]] = {}
+            for w in active_warps:
+                by_cta.setdefault(w.cta_id, []).append(w)
+            for cid, ws in by_cta.items():
+                non_done = [w for w in ws if not w.finished]
+                if non_done and all(w.barrier_pc >= 0 for w in non_done):
+                    for w in non_done:
+                        w.stack.update_top_pc(w.barrier_pc + 1); w.stack.maybe_pop()
+                        w.barrier_pc = -1
+
+            retiring = []
+            for cid, ws in by_cta.items():
+                if all(w.finished or (w.stack and w.stack.is_done()) for w in ws):
+                    retiring.append(cid)
+            for cid in retiring:
+                smem.free_cta(cid)
+                active_warps = [w for w in active_warps if w.cta_id != cid]
+                for sc in sub_cores:
+                    sc.warps = [w for w in sc.warps if w.cta_id != cid]
+                _activate_next_cta()
+
             cycle += 1
-            if all(w.finished or (w.stack and w.stack.is_done()) for w in all_warps):
+            if cta_pointer >= len(cta_queue) and not active_warps:
                 break
             if cycle > 10_000_000:
                 raise RuntimeError("simulation runaway > 1e7 cycles")
-        return cycle
+
+        outputs = {n: v for n, v in params.items() if isinstance(v, np.ndarray)}
+        return SMRunResult(
+            cycles=cycle, outputs=outputs, events=[],
+            occupancy={"active_ctas": occ.active_ctas, "bottleneck": occ.bottleneck},
+        )

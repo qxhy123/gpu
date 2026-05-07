@@ -73,6 +73,7 @@ class SubCore:
         return True, StallReason.ISSUED
 
     def step(self, now: int) -> list[StallReason]:
+        self.scheduler.n = len(self.warps)
         states: list[StallReason] = [StallReason.IDLE] * len(self.warps)
         ready_flags: list[StallReason] = [StallReason.IDLE] * len(self.warps)
         for i, w in enumerate(self.warps):
@@ -112,7 +113,8 @@ class SubCore:
         # functional execution
         w.fn_state.active_mask = w.stack.top().active_mask
         w.fn_state.pc = w.stack.top().pc
-        self.executor.execute(w.fn_state, instr)
+        ex = w.executor if w.executor is not None else self.executor
+        ex.execute(w.fn_state, instr)
 
         # determine issue occupancy / latency adjustments
         latency = self.fus.result_latency(op)

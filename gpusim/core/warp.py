@@ -32,3 +32,4 @@ class Warp:
     last_gmem: object | None = None
     outstanding_loads: list[int] = field(default_factory=list)
     last_operand_extra: int = 0
+    executor: object | None = None  # per-warp executor override (for multi-CTA)

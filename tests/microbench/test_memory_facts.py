@@ -1,4 +1,6 @@
 import numpy as np
+import pathlib
+import gpusim
 from gpusim.frontend.parser import parse
 from gpusim.config.loader import load_default
 from gpusim.core.sm import SM
@@ -51,3 +53,19 @@ def test_one_warp_kernel_ipc_le_1():
     out = np.zeros(1, dtype=np.uint32)
     res = _run(src, {"OUT": out}, block=(32,1,1))
     assert res.cycles >= 4
+
+
+def test_strided_global_costs_more_cycles_than_coalesced():
+    """stride=8 in coalescing_demo should take more cycles than stride=1."""
+    ptx = (pathlib.Path(__file__).parents[2] / "examples/coalescing_demo/kernel.ptx").read_text()
+    n = 1024
+    a = np.arange(n, dtype=np.uint32)
+    out1 = np.zeros(32, dtype=np.uint32)
+    res1 = gpusim.run(ptx_src=ptx, grid=(1,1,1), block=(32,1,1),
+                     params={"A": a, "OUT": out1, "STRIDE": 1}, mode="timing")
+    out8 = np.zeros(32, dtype=np.uint32)
+    res8 = gpusim.run(ptx_src=ptx, grid=(1,1,1), block=(32,1,1),
+                     params={"A": a, "OUT": out8, "STRIDE": 8}, mode="timing")
+    # stride=8 has 8 transactions vs 1 — at least a few extra cycles
+    assert res8.metrics["cycles"] > res1.metrics["cycles"], \
+        f"stride=8 cycles ({res8.metrics['cycles']}) should exceed stride=1 ({res1.metrics['cycles']})"

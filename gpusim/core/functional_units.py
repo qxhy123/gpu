@@ -59,5 +59,5 @@ class FUSet:
         if op.startswith("ld.shared.") or op.startswith("st.shared."):
             return max(1, smem_conflict_degree)
         if op.startswith("ld.global.") or op.startswith("st.global."):
-            return 1
+            return max(1, gmem_transactions)
         return 1

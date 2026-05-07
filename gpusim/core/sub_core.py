@@ -94,14 +94,36 @@ class SubCore:
             return states
         w = self.warps[chosen]
         instr = w.kernel.instrs[w.stack.top().pc]
-        kind = self.fus.classify(instr.op)
-        occ = self.fus.issue_occupancy(instr.op)
+        op = instr.op
+        kind = self.fus.classify(op)
+
+        # Pre-compute smem/gmem info so issue_occupancy sees the real transaction count
+        smem_conflict = 1
+        gmem_n_tx = 1
+        if op.startswith(("ld.shared.", "st.shared.")):
+            from gpusim.core.exec import shared_addresses_for_warp
+            from gpusim.core.smem import bank_conflict_degree
+            w.fn_state.active_mask = w.stack.top().active_mask
+            addrs = shared_addresses_for_warp(w.fn_state, instr)
+            smem_conflict = bank_conflict_degree(
+                addrs, active_mask=w.fn_state.active_mask, banks=self.cfg.smem_banks)
+        elif op.startswith(("ld.global.", "st.global.")):
+            from gpusim.core.exec import global_addresses_for_warp
+            from gpusim.core.gmem import coalescing_info
+            w.fn_state.active_mask = w.stack.top().active_mask
+            addrs = global_addresses_for_warp(w.fn_state, instr)
+            info = coalescing_info(addrs, active_mask=w.fn_state.active_mask)
+            gmem_n_tx = info.n_transactions
+
+        occ = self.fus.issue_occupancy(op, smem_conflict_degree=smem_conflict,
+                                       gmem_transactions=gmem_n_tx)
         self.fus.reserve(kind, now, occ)
-        self._issue(w, instr, now)
+        self._issue(w, instr, now, smem_conflict=smem_conflict, gmem_n_tx=gmem_n_tx)
         states[chosen] = StallReason.ISSUED
         return states
 
-    def _issue(self, w: Warp, instr: Instr, now: int) -> None:
+    def _issue(self, w: Warp, instr: Instr, now: int,
+               smem_conflict: int = 1, gmem_n_tx: int = 1) -> None:
         op = instr.op
         if op == "bar.sync":
             if self.recorder is not None:
@@ -147,20 +169,13 @@ class SubCore:
         ex = w.executor if w.executor is not None else self.executor
         ex.execute(w.fn_state, instr)
 
-        # determine issue occupancy / latency adjustments
+        # determine latency adjustments (FU reservation already done in step() via issue_occupancy)
         latency = self.fus.result_latency(op)
         if op.startswith(("ld.shared.", "st.shared.")):
             from gpusim.core.exec import shared_addresses_for_warp
-            from gpusim.core.smem import bank_conflict_degree
             addrs = shared_addresses_for_warp(w.fn_state, instr)
-            mask = w.fn_state.active_mask
-            smem_conflict = bank_conflict_degree(
-                addrs, active_mask=mask, banks=self.cfg.smem_banks)
-            extra = smem_conflict - 1
-            if extra > 0:
-                kind = self.fus.classify(op)
-                self.fus.reserve(kind, now, extra)
-                latency += extra
+            # latency scaled by conflict degree (FU already reserved for smem_conflict cycles)
+            latency += smem_conflict - 1
             if self.recorder is not None:
                 self.recorder.smem_access(
                     cycle=now, warp_id=w.warp_id,
@@ -173,6 +188,10 @@ class SubCore:
             addrs = global_addresses_for_warp(w.fn_state, instr)
             info = coalescing_info(addrs, active_mask=w.fn_state.active_mask)
             w.last_gmem = info
+            # Each additional transaction adds one extra cycle to the result latency
+            # (the last transaction completes one cycle after the previous ones)
+            if op.startswith("ld.global."):
+                latency += gmem_n_tx - 1
             if self.recorder is not None:
                 self.recorder.gmem_access(
                     cycle=now, warp_id=w.warp_id,

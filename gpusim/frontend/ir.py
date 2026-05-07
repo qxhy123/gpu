@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Mapping, Optional
 
 
 class PtxType(Enum):
@@ -86,5 +86,5 @@ class Kernel:
     params: tuple[Param, ...]
     regs: RegDecl
     instrs: tuple[Instr, ...]
-    labels: dict[str, int]
-    ipdom: dict[int, int]
+    labels: Mapping[str, int]
+    ipdom: Mapping[int, int]

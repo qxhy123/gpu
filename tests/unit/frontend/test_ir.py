@@ -34,14 +34,22 @@ def test_instr_immutable():
         instr.op = "sub.s32"  # type: ignore[misc]
 
 def test_kernel_holds_instr_list_and_labels():
+    from types import MappingProxyType
     k = Kernel(
         name="vec_add",
         params=(Param(name="A", type=PtxType.b64),),
         regs=RegDecl(s32=4, f32=4, pred=2, b64=2),
         instrs=(),
-        labels={"L1": 0},
-        ipdom={},
+        labels=MappingProxyType({"L1": 0}),
+        ipdom=MappingProxyType({}),
     )
     assert k.name == "vec_add"
     assert k.labels["L1"] == 0
     assert k.regs.s32 == 4
+
+def test_kernel_labels_immutable():
+    from gpusim.frontend.parser import parse
+    import pytest
+    k = parse(".visible .entry foo() { .reg .u32 %r<1>; LBL: bar.sync 0; }", "<t>")
+    with pytest.raises(TypeError):
+        k.labels["new"] = 99  # type: ignore[index]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Iterator
+from types import MappingProxyType
 from .lexer import tokenize, Tok
 from .ir import (
     Kernel, Param, RegDecl, Instr, Operand, Reg, Imm, Predicate,
@@ -59,8 +60,8 @@ class _Parser:
             params=tuple(params),
             regs=regs,
             instrs=tuple(instrs),
-            labels=labels,
-            ipdom={},
+            labels=MappingProxyType(labels),
+            ipdom=MappingProxyType({}),
         )
 
     def _parse_params(self) -> list[Param]:
@@ -254,5 +255,6 @@ def parse(src: str, file: str = "<input>") -> Kernel:
     from .ipdom import compute_ipdom
     return Kernel(
         name=k.name, params=k.params, regs=k.regs, instrs=k.instrs,
-        labels=k.labels, ipdom=compute_ipdom(k),
+        labels=MappingProxyType(dict(k.labels)),
+        ipdom=MappingProxyType(compute_ipdom(k)),
     )

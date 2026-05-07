@@ -218,9 +218,12 @@ class _Parser:
             return Reg(name=t.value, type=PtxType.u32)
         if t.kind == "NUM":
             self.i += 1
-            v: int | float = float(t.value) if "." in t.value or "e" in t.value.lower() else (
-                int(t.value, 16) if t.value.startswith(("0x","0X","-0x","-0X")) else int(t.value)
-            )
+            if t.value.startswith(("0x", "0X", "-0x", "-0X")):
+                v: int | float = int(t.value, 16)
+            elif "." in t.value or "e" in t.value.lower():
+                v = float(t.value)
+            else:
+                v = int(t.value)
             return Imm(value=v, type=ty)
         if t.kind == "IDENT":
             # bare identifier: parameter name OR label (resolved later)

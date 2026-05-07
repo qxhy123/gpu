@@ -68,3 +68,15 @@ def test_predicate_and_negation():
     ker = k("@%p1 add.s32 %r1, %r2, %r3;\n@!%p1 add.s32 %r1, %r2, %r3;")
     assert ker.instrs[0].pred is not None and ker.instrs[0].pred.negated is False
     assert ker.instrs[1].pred.negated is True
+
+def test_hex_immediate_with_e_digit():
+    ker = k("mul.lo.s32 %r1, %r2, 0xfe;")
+    inst = ker.instrs[0]
+    from gpusim.frontend.ir import Imm, PtxType
+    assert inst.src[1] == Imm(value=0xfe, type=PtxType.s32)
+
+def test_hex_immediate_uppercase_e():
+    ker = k("mul.lo.s32 %r1, %r2, 0xCAFE;")
+    inst = ker.instrs[0]
+    from gpusim.frontend.ir import Imm
+    assert inst.src[1].value == 0xCAFE

@@ -1,0 +1,42 @@
+{# gpusim/viz/_template.html.j2 #}
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>gpusim report — {{ kernel_name }}</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 1200px; margin: 1em auto; padding: 0 1em; }
+  table { border-collapse: collapse; }
+  th, td { padding: 4px 12px; border-bottom: 1px solid #ddd; text-align: left; }
+  pre { background: #f6f8fa; padding: 8px; overflow-x: auto; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1em; }
+</style>
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+</head><body>
+<h1>gpusim report — {{ kernel_name }}</h1>
+
+<h2>Summary</h2>
+<table>
+  <tr><th>Grid</th><td>{{ grid }}</td></tr>
+  <tr><th>Block</th><td>{{ block }}</td></tr>
+  <tr><th>Cycles</th><td>{{ cycles }}</td></tr>
+  <tr><th>Active CTAs / SM</th><td>{{ occupancy.active_ctas }}</td></tr>
+  <tr><th>Bottleneck</th><td>{{ occupancy.bottleneck }}</td></tr>
+</table>
+
+<h2>Stall breakdown</h2>
+<div id="stall_pie"></div>
+
+<h2>IPC timeline</h2>
+<div id="ipc_line"></div>
+
+<h2>Stall by source line</h2>
+{{ stall_table_html|safe }}
+
+<h2>Bank conflict histogram</h2>
+{{ bank_table_html|safe }}
+
+<script>
+Plotly.newPlot("stall_pie", {{ stall_pie_json|safe }}, {});
+Plotly.newPlot("ipc_line", {{ ipc_line_json|safe }}, {});
+</script>
+</body></html>

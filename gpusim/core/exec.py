@@ -127,3 +127,232 @@ class ParamSpace:
 
     def read_u32(self, name: str) -> int:
         return int(self._params[name]) & 0xFFFFFFFF
+
+
+from gpusim.frontend.ir import (
+    Instr, Kernel, Reg, Imm, MemSpace, PtxType, Predicate,
+)
+
+
+class InstrExecutor:
+    """Executes one Instr against a WarpFnState. Timing-agnostic."""
+
+    def __init__(self, kernel: Kernel, gmem: GlobalMemory, smem: SharedMemory,
+                 params: ParamSpace, cta_id: int,
+                 ctaid: tuple[int,int,int], nctaid: tuple[int,int,int],
+                 ntid: tuple[int,int,int]):
+        self.k = kernel
+        self.gmem = gmem
+        self.smem = smem
+        self.params = params
+        self.cta_id = cta_id
+        self.ctaid = ctaid
+        self.nctaid = nctaid
+        self.ntid = ntid
+
+    # ---- helpers ----
+    def _lane_active(self, w: WarpFnState, lane: int, instr: Instr) -> bool:
+        if not (w.active_mask >> lane) & 1:
+            return False
+        if instr.pred is None:
+            return True
+        v = w.threads[lane].get_pred(instr.pred.reg)
+        return (not v) if instr.pred.negated else v
+
+    @staticmethod
+    def _read(t: ThreadState, op, ty: PtxType):
+        if isinstance(op, Imm):
+            return op.value
+        if isinstance(op, str):
+            # label/param identifier — caller handles separately
+            return op
+        # Reg
+        name = op.name
+        if name in ("tid.x","tid.y","tid.z","ntid.x","ntid.y","ntid.z",
+                    "ctaid.x","ctaid.y","ctaid.z","nctaid.x","nctaid.y","nctaid.z"):
+            return None  # special; resolved in execute() per-lane
+        # Use the register's own declared type for lookup; fall back to instruction ty.
+        # _write always writes to both u32/s32 stores for 32-bit int types, so cross-type
+        # reads (e.g. mov.u32 storing then add.s32 reading) work correctly.
+        reg_ty = op.type if hasattr(op, "type") and op.type is not None else ty
+        if reg_ty in (PtxType.u32, PtxType.b32):
+            return t.get_u32(name)
+        if reg_ty is PtxType.s32:
+            return t.get_s32(name)
+        if reg_ty in (PtxType.s64, PtxType.u64, PtxType.b64):
+            return t.get_u64(name)
+        if reg_ty is PtxType.f32:
+            return t.get_f32(name)
+        if reg_ty is PtxType.pred:
+            return t.get_pred(name)
+        return t.get_u32(name)
+
+    @staticmethod
+    def _write(t: ThreadState, op: Reg, value, ty: PtxType):
+        name = op.name
+        if ty is PtxType.s32:
+            # Write to both s32 and u32 stores so cross-type reads work
+            t.set_s32(name, int(value))
+            t.set_u32(name, int(value) & 0xFFFFFFFF)
+        elif ty in (PtxType.u32, PtxType.b32):
+            # Write to both u32 and s32 stores so cross-type reads work
+            t.set_u32(name, int(value))
+            t.set_s32(name, int(value))
+        elif ty in (PtxType.s64, PtxType.u64, PtxType.b64):
+            t.set_u64(name, int(value))
+        elif ty is PtxType.f32:
+            t.set_f32(name, float(value))
+        elif ty is PtxType.pred:
+            t.set_pred(name, bool(value))
+        else:
+            t.set_u32(name, int(value))
+
+    def _resolve_special(self, t: ThreadState, sreg: str, lane: int) -> int:
+        if sreg == "tid.x": return lane  # warp_size lanes within first dim of CTA
+        if sreg in ("tid.y","tid.z"): return 0
+        if sreg == "ntid.x": return self.ntid[0]
+        if sreg == "ntid.y": return self.ntid[1]
+        if sreg == "ntid.z": return self.ntid[2]
+        if sreg == "ctaid.x": return self.ctaid[0]
+        if sreg == "ctaid.y": return self.ctaid[1]
+        if sreg == "ctaid.z": return self.ctaid[2]
+        if sreg == "nctaid.x": return self.nctaid[0]
+        if sreg == "nctaid.y": return self.nctaid[1]
+        if sreg == "nctaid.z": return self.nctaid[2]
+        raise ValueError(f"unknown special reg {sreg}")
+
+    # ---- main entry ----
+    def execute(self, w: WarpFnState, instr: Instr) -> None:
+        op = instr.op
+        # specials — bra and bar.sync return without per-lane work; control handled by caller
+        if op == "bra" or op == "bar.sync" or op == "membar.cta":
+            return
+        for lane in range(w.warp_size):
+            if not self._lane_active(w, lane, instr):
+                continue
+            self._exec_lane(w.threads[lane], instr, lane)
+
+    def _exec_lane(self, t: ThreadState, instr: Instr, lane: int) -> None:
+        op = instr.op
+        ty = instr.type
+
+        # mov
+        if op.startswith("mov."):
+            src = instr.src[0]
+            if isinstance(src, Reg) and src.name in (
+                "tid.x","tid.y","tid.z","ntid.x","ntid.y","ntid.z",
+                "ctaid.x","ctaid.y","ctaid.z","nctaid.x","nctaid.y","nctaid.z"):
+                v = self._resolve_special(t, src.name, lane)
+            else:
+                v = self._read(t, src, ty)
+            self._write(t, instr.dst[0], v, ty)
+            return
+
+        # cvt
+        if op.startswith("cvt."):
+            # cvt.<dst_ty>.<src_ty>
+            parts = op.split(".")
+            dst_ty = PtxType(parts[1]); src_ty = PtxType(parts[2])
+            v = self._read(t, instr.src[0], src_ty)
+            if dst_ty is PtxType.s32 and src_ty is PtxType.f32:
+                self._write(t, instr.dst[0], int(v), PtxType.s32)
+            elif dst_ty is PtxType.f32 and src_ty is PtxType.s32:
+                self._write(t, instr.dst[0], float(v), PtxType.f32)
+            elif dst_ty in (PtxType.u64,) and src_ty in (PtxType.u32, PtxType.s32):
+                self._write(t, instr.dst[0], int(v) & ((1<<64)-1), PtxType.u64)
+            elif dst_ty in (PtxType.u32, PtxType.s32) and src_ty in (PtxType.u64,):
+                self._write(t, instr.dst[0], int(v) & 0xFFFFFFFF, dst_ty)
+            else:
+                self._write(t, instr.dst[0], v, dst_ty)
+            return
+
+        # arithmetic
+        if op in ("add.s32","add.u32","sub.s32","mul.lo.s32","shl.b32","shr.s32","add.u64","sub.u64"):
+            a = self._read(t, instr.src[0], ty)
+            b = self._read(t, instr.src[1], ty)
+            if op.startswith("add."):    r = a + b
+            elif op.startswith("sub."):  r = a - b
+            elif op == "mul.lo.s32":     r = (a * b) & 0xFFFFFFFF
+            elif op == "shl.b32":        r = (a << (b & 31)) & 0xFFFFFFFF
+            elif op == "shr.s32":        r = (a >> (b & 31))
+            self._write(t, instr.dst[0], r, ty)
+            return
+
+        if op in ("add.f32","sub.f32","mul.f32","mad.f32","fma.f32","mad.lo.s32"):
+            if op == "mad.lo.s32":
+                a = self._read(t, instr.src[0], PtxType.s32)
+                b = self._read(t, instr.src[1], PtxType.s32)
+                c = self._read(t, instr.src[2], PtxType.s32)
+                self._write(t, instr.dst[0], (a*b + c) & 0xFFFFFFFF, PtxType.s32)
+                return
+            a = self._read(t, instr.src[0], PtxType.f32)
+            b = self._read(t, instr.src[1], PtxType.f32)
+            if op == "add.f32": r = a + b
+            elif op == "sub.f32": r = a - b
+            elif op == "mul.f32": r = a * b
+            elif op in ("mad.f32","fma.f32"):
+                c = self._read(t, instr.src[2], PtxType.f32)
+                r = a * b + c
+            self._write(t, instr.dst[0], r, PtxType.f32)
+            return
+
+        # setp
+        if op.startswith("setp."):
+            parts = op.split(".")
+            cmp_ = parts[1]; sty = PtxType(parts[2])
+            a = self._read(t, instr.src[0], sty); b = self._read(t, instr.src[1], sty)
+            if cmp_ == "eq": r = a == b
+            elif cmp_ == "ne": r = a != b
+            elif cmp_ == "lt": r = a < b
+            elif cmp_ == "le": r = a <= b
+            elif cmp_ == "gt": r = a > b
+            elif cmp_ == "ge": r = a >= b
+            else: raise ValueError(f"unknown setp cmp {cmp_}")
+            self._write(t, instr.dst[0], r, PtxType.pred)
+            return
+
+        # ld.param.<ty>
+        if op.startswith("ld.param."):
+            param_name = instr.src[0]
+            if isinstance(param_name, Reg):
+                param_name = param_name.name
+            if ty in (PtxType.u64, PtxType.b64, PtxType.s64):
+                v = self.params.read_u64(param_name)
+            else:
+                v = self.params.read_u32(param_name)
+            self._write(t, instr.dst[0], v, ty)
+            return
+
+        # ld.global.<ty> / ld.shared.<ty>
+        if op.startswith("ld.global.") or op.startswith("ld.shared."):
+            base = self._read(t, instr.src[0], PtxType.u64)
+            off = 0
+            if len(instr.src) > 1 and isinstance(instr.src[1], Imm):
+                off = int(instr.src[1].value)
+            addr = int(base) + off
+            if op.startswith("ld.global."):
+                if ty is PtxType.f32: v = self.gmem.load_f32(addr)
+                else:                 v = self.gmem.load_u32(addr)
+            else:
+                if ty is PtxType.f32: v = self.smem.load_f32(self.cta_id, addr)
+                else:                 v = self.smem.load_u32(self.cta_id, addr)
+            self._write(t, instr.dst[0], v, ty)
+            return
+
+        # st.global.<ty> / st.shared.<ty>
+        if op.startswith("st.global.") or op.startswith("st.shared."):
+            base = self._read(t, instr.src[0], PtxType.u64)
+            off = 0; src_pos = 1
+            if isinstance(instr.src[1], Imm):
+                off = int(instr.src[1].value); src_pos = 2
+            addr = int(base) + off
+            v = self._read(t, instr.src[src_pos], ty)
+            if op.startswith("st.global."):
+                if ty is PtxType.f32: self.gmem.store_f32(addr, float(v))
+                else:                 self.gmem.store_u32(addr, int(v))
+            else:
+                if ty is PtxType.f32: self.smem.store_f32(self.cta_id, addr, float(v))
+                else:                 self.smem.store_u32(self.cta_id, addr, int(v))
+            return
+
+        raise NotImplementedError(f"opcode {op!r}")

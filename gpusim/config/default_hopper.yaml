@@ -1,0 +1,27 @@
+sub_cores: 4
+warps_per_sm: 64
+threads_per_sm: 2048
+max_ctas_per_sm: 32
+regs_per_sm: 65536
+smem_per_sm_bytes: 49152
+smem_banks: 32
+
+scheduler:
+  policy: gto
+
+regfile:
+  banks: 4
+  regs_per_subcore: 16384
+
+fu:
+  fp32_throughput: 1
+  int32_throughput: 1
+  lsu_throughput: 1
+  bru_throughput: 1
+  fp32_latency: 4
+  int32_latency: 4
+  fma_latency: 4
+  bru_latency: 1
+  smem_latency: 20
+  gmem_latency: 400
+  lsu_outstanding: 16

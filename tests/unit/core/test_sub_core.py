@@ -40,3 +40,24 @@ def test_subcore_idle_when_warp_done():
     sc.step(now=0)
     s1 = sc.step(now=1)
     assert s1[0] is StallReason.IDLE
+
+
+def test_only_one_warp_issues_per_subcore_per_cycle():
+    """When multiple ready warps share a sub-core, exactly one issues per cycle;
+    the others are recorded as STRUCTURAL (not ISSUED)."""
+    src = ".visible .entry k() { .reg .u32 %r<4>; mov.u32 %r1, 1; mov.u32 %r2, 2; }"
+    k = parse(src, "<t>")
+    cfg = load_default()
+    g = GlobalMemory(); s = SharedMemory(); s.allocate_cta(0, 4096)
+    p = ParamSpace({})
+    ex = InstrExecutor(kernel=k, gmem=g, smem=s, params=p, cta_id=0,
+                       ctaid=(0,0,0), nctaid=(1,1,1), ntid=(32,1,1))
+
+    # 3 warps in one sub-core — all are ready at cycle 0, but only one can issue
+    sc = SubCore(sub_core_id=0, cfg=cfg, executor=ex,
+                 warps=[_make_warp(k, wid=0), _make_warp(k, wid=4), _make_warp(k, wid=8)])
+    states = sc.step(now=0)
+    issued_count = sum(1 for st in states if st is StallReason.ISSUED)
+    structural_count = sum(1 for st in states if st is StallReason.STRUCTURAL)
+    assert issued_count == 1, f"expected 1 ISSUED, got {issued_count}: {states}"
+    assert structural_count == 2, f"expected 2 STRUCTURAL, got {structural_count}: {states}"

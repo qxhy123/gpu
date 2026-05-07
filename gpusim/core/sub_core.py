@@ -81,8 +81,15 @@ class SubCore:
             ok, why = self._is_ready(w, now)
             ready_flags[i] = why if not ok else StallReason.ISSUED
         chosen = self.scheduler.pick(now, candidates=lambda i: ready_flags[i] is StallReason.ISSUED)
+        # initial: all warps reflect their own readiness
         for i in range(len(self.warps)):
             states[i] = ready_flags[i]
+        # scheduler-decision adjustment: only ONE warp per sub-core actually issues.
+        # Other "ready" warps lost the issue slot this cycle → STRUCTURAL.
+        if chosen is not None:
+            for i in range(len(self.warps)):
+                if i != chosen and ready_flags[i] is StallReason.ISSUED:
+                    states[i] = StallReason.STRUCTURAL
         # If the chosen warp is issuing under a partial mask (inside a divergent region),
         # record DIVERGENCE_SERIAL instead of ISSUED so the trace makes the cost visible.
         if chosen is not None:

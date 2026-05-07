@@ -22,7 +22,7 @@ class Recorder:
 
     def warp_state(self, *, cycle: int, warp_id: int, state: str, pc: int) -> None:
         cur = self._cur_state.get(warp_id)
-        if cur and cur[2] == state and cur[1] + 1 == cycle:
+        if cur and cur[2] == state and cur[3] == pc and cur[1] + 1 == cycle:
             cur[1] = cycle
             return
         if cur:

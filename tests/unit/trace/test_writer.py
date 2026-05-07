@@ -26,4 +26,5 @@ def test_write_parquet_creates_three_tables(tmp_path):
     assert (out / "div.parquet").exists()
 
     df = pq.read_table(out / "warp_state.parquet").to_pandas()
-    assert len(df) == 2  # two segments
+    # pc=0 ISSUED and pc=1 ISSUED are different PCs → separate segments; plus SCOREBOARD = 3
+    assert len(df) == 3  # three segments (different-PC ISSUED entries are not merged)

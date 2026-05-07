@@ -51,3 +51,12 @@ def test_cta_lifecycle():
     r.cta_retire(cycle=200, cta_id=0)
     evs = list(r.cta_events())
     assert len(evs) == 2
+
+def test_warp_state_does_not_merge_different_pcs():
+    r = Recorder()
+    r.warp_state(cycle=0, warp_id=0, state="ISSUED", pc=0)
+    r.warp_state(cycle=1, warp_id=0, state="ISSUED", pc=1)  # same state, different pc
+    r.warp_state(cycle=2, warp_id=0, state="ISSUED", pc=2)
+    segs = list(r.warp_state_segments(warp_id=0))
+    assert len(segs) == 3
+    assert [s.pc for s in segs] == [0, 1, 2]

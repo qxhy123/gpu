@@ -356,3 +356,122 @@ class InstrExecutor:
             return
 
         raise NotImplementedError(f"opcode {op!r}")
+
+
+from gpusim.frontend.parser import parse as parse_ptx
+from .simt_stack import SIMTStack
+
+
+def _resolve_branch_mask(w: WarpFnState, instr: Instr) -> int:
+    """Return the mask of currently-active lanes whose predicate is True (i.e., will take the branch)."""
+    if instr.pred is None:
+        return w.active_mask
+    mask = 0
+    for lane in range(w.warp_size):
+        if not (w.active_mask >> lane) & 1:
+            continue
+        v = w.threads[lane].get_pred(instr.pred.reg)
+        if instr.pred.negated:
+            v = not v
+        if v:
+            mask |= 1 << lane
+    return mask
+
+
+def _step_warp(kernel: Kernel, w: WarpFnState, ex: InstrExecutor,
+               stack: SIMTStack, barrier_state: dict) -> bool:
+    """Advance warp by one instruction. Returns True if warp completed."""
+    if stack.is_done():
+        return True
+    pc = stack.top().pc
+    if pc >= len(kernel.instrs):
+        stack.end_warp()
+        return True
+    w.pc = pc
+    w.active_mask = stack.top().active_mask
+    instr = kernel.instrs[pc]
+
+    # bra
+    if instr.op == "bra":
+        target_label = instr.src[0]
+        target_pc = kernel.labels[target_label] if isinstance(target_label, str) else int(target_label)
+        if instr.pred is None:
+            stack.update_top_pc(target_pc)
+            stack.maybe_pop()
+            return False
+        taken_mask = _resolve_branch_mask(w, instr)
+        rpc = kernel.ipdom.get(pc, target_pc)
+        stack.diverge(taken_pc=target_pc, fallthrough_pc=pc + 1,
+                      taken_mask=taken_mask, rpc=rpc)
+        stack.maybe_pop()
+        return False
+
+    # bar.sync — handled by outer loop (no-op here; CTA-level barrier in functional run)
+    if instr.op == "bar.sync":
+        stack.update_top_pc(pc + 1); stack.maybe_pop()
+        return False
+
+    # all other ops: per-lane execution then PC++
+    ex.execute(w, instr)
+    stack.update_top_pc(pc + 1)
+    stack.maybe_pop()
+    return False
+
+
+def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
+                   grid: tuple[int,int,int], block: tuple[int,int,int]) -> None:
+    """Run kernel functionally over the grid. Mutates numpy arrays in `params` in place."""
+    k = parse_ptx(ptx_src, "<inline>")
+    g = GlobalMemory()
+    s = SharedMemory()
+    p_dict: dict[str, int] = {}
+    for name, val in params.items():
+        if isinstance(val, np.ndarray):
+            p_dict[name] = g.bind(name, val)
+        else:
+            p_dict[name] = int(val)
+    paramspace = ParamSpace(p_dict)
+
+    threads_per_cta = block[0] * block[1] * block[2]
+    warps_per_cta = (threads_per_cta + 31) // 32
+
+    for cz in range(grid[2]):
+      for cy in range(grid[1]):
+        for cx in range(grid[0]):
+            cta_id = cx + cy * grid[0] + cz * grid[0] * grid[1]
+            s.allocate_cta(cta_id, 48 * 1024)
+            ex = InstrExecutor(kernel=k, gmem=g, smem=s, params=paramspace,
+                               cta_id=cta_id, ctaid=(cx,cy,cz),
+                               nctaid=grid, ntid=block)
+            warps = []
+            for wid in range(warps_per_cta):
+                tid_base = wid * 32
+                tids = tuple(tid_base + i for i in range(32))
+                w = WarpFnState(warp_size=32, tids=tids)
+                warps.append((w, SIMTStack(warp_size=32, entry_pc=0)))
+
+            done = [False] * len(warps)
+            barrier_pcs = [-1] * len(warps)
+            while not all(done):
+                progressed = False
+                for i, (w, st) in enumerate(warps):
+                    if done[i] or barrier_pcs[i] >= 0:
+                        continue
+                    pc = st.top().pc if not st.is_done() else -1
+                    if pc >= 0 and pc < len(k.instrs) and k.instrs[pc].op == "bar.sync":
+                        barrier_pcs[i] = pc
+                        continue
+                    finished = _step_warp(k, w, ex, st, {})
+                    if finished: done[i] = True
+                    progressed = True
+                if all((done[i] or barrier_pcs[i] >= 0) for i in range(len(warps))) \
+                   and not all(done):
+                    for i in range(len(warps)):
+                        if barrier_pcs[i] >= 0:
+                            warps[i][1].update_top_pc(barrier_pcs[i] + 1)
+                            warps[i][1].maybe_pop()
+                            barrier_pcs[i] = -1
+                    progressed = True
+                if not progressed:
+                    raise RuntimeError("functional_run: no warp progressed (deadlock)")
+            s.free_cta(cta_id)

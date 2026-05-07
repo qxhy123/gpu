@@ -207,8 +207,8 @@ class InstrExecutor:
         else:
             t.set_u32(name, int(value))
 
-    def _resolve_special(self, t: ThreadState, sreg: str, lane: int) -> int:
-        if sreg == "tid.x": return lane  # warp_size lanes within first dim of CTA
+    def _resolve_special(self, t: ThreadState, sreg: str, lane: int, tid_x: int = -1) -> int:
+        if sreg == "tid.x": return tid_x if tid_x >= 0 else lane
         if sreg in ("tid.y","tid.z"): return 0
         if sreg == "ntid.x": return self.ntid[0]
         if sreg == "ntid.y": return self.ntid[1]
@@ -230,9 +230,10 @@ class InstrExecutor:
         for lane in range(w.warp_size):
             if not self._lane_active(w, lane, instr):
                 continue
-            self._exec_lane(w.threads[lane], instr, lane)
+            tid_x = w.tids[lane] if lane < len(w.tids) else lane
+            self._exec_lane(w.threads[lane], instr, lane, tid_x=tid_x)
 
-    def _exec_lane(self, t: ThreadState, instr: Instr, lane: int) -> None:
+    def _exec_lane(self, t: ThreadState, instr: Instr, lane: int, tid_x: int = -1) -> None:
         op = instr.op
         ty = instr.type
 
@@ -242,7 +243,7 @@ class InstrExecutor:
             if isinstance(src, Reg) and src.name in (
                 "tid.x","tid.y","tid.z","ntid.x","ntid.y","ntid.z",
                 "ctaid.x","ctaid.y","ctaid.z","nctaid.x","nctaid.y","nctaid.z"):
-                v = self._resolve_special(t, src.name, lane)
+                v = self._resolve_special(t, src.name, lane, tid_x=tid_x)
             else:
                 v = self._read(t, src, ty)
             self._write(t, instr.dst[0], v, ty)

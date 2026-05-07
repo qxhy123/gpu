@@ -14,6 +14,7 @@ _PUNCT = {
     "{": "LBRACE", "}": "RBRACE", "[": "LBRACK", "]": "RBRACK",
     "(": "LPAREN", ")": "RPAREN", ",": "COMMA", ";": "SEMI",
     "@": "AT", "!": "BANG", ":": "COLON", ".": "DOT",
+    "<": "LT", ">": "GT",
 }
 
 class LexError(Exception):

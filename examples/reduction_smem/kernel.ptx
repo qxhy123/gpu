@@ -1,0 +1,80 @@
+// examples/reduction_smem/kernel.ptx
+.visible .entry reduce32(.param .u64 A, .param .u64 OUT)
+{
+    .reg .u32 %r<10>;
+    .reg .u64 %rd<6>;
+    .reg .pred %p<2>;
+
+    ld.param.u64 %rd1, [A];
+    ld.param.u64 %rd2, [OUT];
+
+    mov.u32 %r1, %tid.x;
+    shl.b32 %r2, %r1, 2;
+    cvt.u64.u32 %rd3, %r2;
+    add.u64 %rd4, %rd1, %rd3;
+    ld.global.u32 %r3, [%rd4];        // r3 = A[tid]
+    st.shared.u32 [%rd3], %r3;        // smem[tid*4] = r3
+    bar.sync 0;
+
+    // tree reduction: stride 16,8,4,2,1
+    setp.lt.s32 %p1, %r1, 16;
+    @%p1 bra S16;
+    bra DONE16;
+S16:
+    add.u64 %rd5, %rd3, 64;           // smem[(tid+16)*4]
+    ld.shared.u32 %r4, [%rd5];
+    ld.shared.u32 %r5, [%rd3];
+    add.s32 %r5, %r5, %r4;
+    st.shared.u32 [%rd3], %r5;
+DONE16:
+    bar.sync 0;
+
+    setp.lt.s32 %p1, %r1, 8;
+    @%p1 bra S8;
+    bra DONE8;
+S8:
+    add.u64 %rd5, %rd3, 32;
+    ld.shared.u32 %r4, [%rd5];
+    ld.shared.u32 %r5, [%rd3];
+    add.s32 %r5, %r5, %r4;
+    st.shared.u32 [%rd3], %r5;
+DONE8:
+    bar.sync 0;
+
+    setp.lt.s32 %p1, %r1, 4;
+    @%p1 bra S4;
+    bra DONE4;
+S4:
+    add.u64 %rd5, %rd3, 16;
+    ld.shared.u32 %r4, [%rd5];
+    ld.shared.u32 %r5, [%rd3];
+    add.s32 %r5, %r5, %r4;
+    st.shared.u32 [%rd3], %r5;
+DONE4:
+    bar.sync 0;
+
+    setp.lt.s32 %p1, %r1, 2;
+    @%p1 bra S2;
+    bra DONE2;
+S2:
+    add.u64 %rd5, %rd3, 8;
+    ld.shared.u32 %r4, [%rd5];
+    ld.shared.u32 %r5, [%rd3];
+    add.s32 %r5, %r5, %r4;
+    st.shared.u32 [%rd3], %r5;
+DONE2:
+    bar.sync 0;
+
+    setp.eq.s32 %p1, %r1, 0;
+    @%p1 bra WR;
+    bra END;
+WR:
+    ld.shared.u32 %r6, [0];
+    add.u64 %rd5, %rd2, 0;
+    add.s32 %r7, %r6, 0;
+    ld.shared.u32 %r4, [4];
+    add.s32 %r6, %r6, %r4;
+    st.global.u32 [%rd5], %r6;
+END:
+    bar.sync 0;
+}

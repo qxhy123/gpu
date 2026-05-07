@@ -1,0 +1,19 @@
+// examples/divergence_demo/kernel.ptx
+.visible .entry div_demo(.param .u64 OUT)
+{
+    .reg .u32 %r<5>; .reg .u64 %rd<3>; .reg .pred %p<2>;
+    ld.param.u64 %rd1, [OUT];
+    mov.u32 %r1, %tid.x;
+    shl.b32 %r2, %r1, 2;
+    cvt.u64.u32 %rd2, %r2;
+    add.u64 %rd1, %rd1, %rd2;
+
+    setp.lt.s32 %p1, %r1, 16;
+    @%p1 bra THEN;
+    mov.u32 %r3, 200;
+    bra DONE;
+THEN:
+    mov.u32 %r3, 100;
+DONE:
+    st.global.u32 [%rd1], %r3;
+}

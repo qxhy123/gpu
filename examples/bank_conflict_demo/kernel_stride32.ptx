@@ -1,0 +1,19 @@
+// examples/bank_conflict_demo/kernel_stride32.ptx
+// stride=32 variant: lane i -> smem[i*128] so all lanes hit bank 0 (32-way conflict).
+// Compare with kernel.ptx (stride=1, no conflict) to see the serialization cost.
+.visible .entry bank_demo(.param .u64 OUT)
+{
+    .reg .u32 %r<5>; .reg .u64 %rd<3>;
+    ld.param.u64 %rd1, [OUT];
+    mov.u32 %r1, %tid.x;
+    // stride 32: lane i -> smem[i*128], all 32 lanes map to bank 0 (32-way conflict)
+    shl.b32 %r2, %r1, 7;
+    cvt.u64.u32 %rd2, %r2;
+    st.shared.u32 [%rd2], %r1;
+    bar.sync 0;
+    ld.shared.u32 %r3, [%rd2];
+    shl.b32 %r2, %r1, 2;
+    cvt.u64.u32 %rd2, %r2;
+    add.u64 %rd1, %rd1, %rd2;
+    st.global.u32 [%rd1], %r3;
+}

@@ -208,8 +208,10 @@ class InstrExecutor:
             t.set_u32(name, int(value))
 
     def _resolve_special(self, t: ThreadState, sreg: str, lane: int, tid_x: int = -1) -> int:
-        if sreg == "tid.x": return tid_x if tid_x >= 0 else lane
-        if sreg in ("tid.y","tid.z"): return 0
+        linear = tid_x if tid_x >= 0 else lane
+        if sreg == "tid.x": return linear % self.ntid[0]
+        if sreg == "tid.y": return (linear // self.ntid[0]) % self.ntid[1]
+        if sreg == "tid.z": return linear // (self.ntid[0] * self.ntid[1])
         if sreg == "ntid.x": return self.ntid[0]
         if sreg == "ntid.y": return self.ntid[1]
         if sreg == "ntid.z": return self.ntid[2]

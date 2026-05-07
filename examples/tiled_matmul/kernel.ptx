@@ -1,0 +1,64 @@
+// examples/tiled_matmul/kernel.ptx
+// Single 16x16 tile multiply: C = A * B. Block = (16, 16, 1).
+.visible .entry tile_matmul(.param .u64 A, .param .u64 B, .param .u64 C)
+{
+    .reg .u32 %r<16>;
+    .reg .u64 %rd<10>;
+    .reg .f32 %f<8>;
+    .reg .pred %p<2>;
+
+    ld.param.u64 %rd1, [A];
+    ld.param.u64 %rd2, [B];
+    ld.param.u64 %rd3, [C];
+
+    mov.u32 %r1, %tid.x;        // col
+    mov.u32 %r2, %tid.y;        // row
+    // linear thread id = row * 16 + col
+    shl.b32 %r3, %r2, 4;
+    add.s32 %r4, %r3, %r1;      // tid_lin
+
+    // smem layout: A_tile[256] then B_tile[256]
+    // load A[row][col] → smem_A[row*16 + col]
+    shl.b32 %r5, %r4, 2;        // tid_lin * 4
+    cvt.u64.u32 %rd4, %r5;
+    add.u64 %rd5, %rd1, %rd4;
+    ld.global.f32 %f1, [%rd5];
+    st.shared.f32 [%rd4], %f1;
+
+    // load B[row][col] → smem_B[256*4 + row*16 + col]
+    add.u64 %rd6, %rd2, %rd4;
+    ld.global.f32 %f2, [%rd6];
+    add.u32 %r6, %r5, 1024;     // smem_B base offset = 256 * 4
+    cvt.u64.u32 %rd7, %r6;
+    st.shared.f32 [%rd7], %f2;
+    bar.sync 0;
+
+    // dot product: sum over k of smem_A[row*16+k] * smem_B[k*16+col]
+    mov.f32 %f3, 0.0;           // accumulator = 0.0
+    mov.u32 %r7, 0;             // k = 0
+LOOP:
+    setp.ge.s32 %p1, %r7, 16;
+    @%p1 bra DONE_LOOP;
+    // smem_A offset = (row * 16 + k) * 4
+    shl.b32 %r8, %r2, 4;
+    add.s32 %r9, %r8, %r7;
+    shl.b32 %r10, %r9, 2;
+    cvt.u64.u32 %rd8, %r10;
+    ld.shared.f32 %f4, [%rd8];
+    // smem_B offset = (k * 16 + col) * 4 + 1024
+    shl.b32 %r11, %r7, 4;
+    add.s32 %r12, %r11, %r1;
+    shl.b32 %r13, %r12, 2;
+    add.s32 %r14, %r13, 1024;
+    cvt.u64.u32 %rd9, %r14;
+    ld.shared.f32 %f5, [%rd9];
+    fma.f32 %f3, %f4, %f5, %f3;
+    add.s32 %r7, %r7, 1;
+    bra LOOP;
+DONE_LOOP:
+
+    // C[row][col] = acc
+    add.u64 %rd5, %rd3, %rd4;
+    st.global.f32 [%rd5], %f3;
+    bar.sync 0;
+}

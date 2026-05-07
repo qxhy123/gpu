@@ -107,22 +107,133 @@ class _Parser:
         return RegDecl(**counts)
 
     def _parse_body(self, regs: RegDecl) -> tuple[list[Instr], dict[str,int]]:
-        # placeholder for Tasks 5–7; for now just skip everything until matching RBRACE
         instrs: list[Instr] = []
         labels: dict[str, int] = {}
-        depth = 1
-        while depth > 0:
-            t = self.peek()
-            if t.kind == "LBRACE":
-                depth += 1; self.i += 1
-            elif t.kind == "RBRACE":
-                depth -= 1
-                if depth == 0:
-                    break
-                self.i += 1
-            else:
-                self.i += 1
+        while self.peek().kind != "RBRACE":
+            # label "L1:"
+            if self.peek().kind == "IDENT" and self.peek(1).kind == "COLON":
+                labels[self.peek().value] = len(instrs)
+                self.i += 2
+                continue
+            instrs.append(self._parse_instr(len(instrs)))
         return instrs, labels
+
+    def _parse_instr(self, pc: int) -> Instr:
+        loc_tok = self.peek()
+        # optional predicate "@p" or "@!p"
+        pred: Predicate | None = None
+        if self.accept("AT"):
+            negated = self.accept("BANG") is not None
+            pred_reg = self.eat("REG").value
+            pred = Predicate(reg=pred_reg, negated=negated)
+
+        # opcode dotted: ident('.' ident)*
+        op_parts = [self.eat("IDENT").value]
+        while self.peek().kind == "DOT" and self.peek(1).kind == "IDENT":
+            self.eat("DOT")
+            op_parts.append(self.eat("IDENT").value)
+        op = ".".join(op_parts)
+
+        space = self._space_from_op(op)
+        ptx_type = self._type_from_op(op)
+
+        dst, src = self._parse_operands(op, ptx_type)
+        self.eat("SEMI")
+        return Instr(
+            op=op, dst=tuple(dst), src=tuple(src), pred=pred,
+            space=space, type=ptx_type, pc=pc,
+            src_loc=SrcLoc(loc_tok.file, loc_tok.line),
+        )
+
+    @staticmethod
+    def _space_from_op(op: str) -> MemSpace | None:
+        for s in MemSpace:
+            if f".{s.value}." in f".{op}.":
+                return s
+        return None
+
+    @staticmethod
+    def _type_from_op(op: str) -> PtxType:
+        # last dotted component that is a known type
+        for part in reversed(op.split(".")):
+            try:
+                return PtxType(part)
+            except ValueError:
+                continue
+        return PtxType.b32  # fallback for branches and bar.sync etc.
+
+    def _parse_operands(self, op: str, ty: PtxType) -> tuple[list[Operand], list]:
+        # branches/sync handled in Task 6; arithmetic and memory here.
+        if op.startswith("bra") or op.startswith("@") or op.startswith("bar.") or op.startswith("membar"):
+            return [], list(self._parse_operand_list(ty))
+
+        if op.startswith("ld."):
+            # ld.<space>.<ty> dst, [addr];
+            dst = self._parse_operand(ty)
+            self.eat("COMMA")
+            base, off = self._parse_addr()
+            srcs: list = [base]
+            if off is not None:
+                srcs.append(off)
+            return [dst], srcs
+
+        if op.startswith("st."):
+            # st.<space>.<ty> [addr], src;
+            base, off = self._parse_addr()
+            self.eat("COMMA")
+            src = self._parse_operand(ty)
+            srcs_st: list = [base]
+            if off is not None:
+                srcs_st.append(off)
+            srcs_st.append(src)
+            return [], srcs_st
+
+        # arithmetic / mov / cvt / setp: dst, src...
+        ops = list(self._parse_operand_list(ty))
+        if not ops:
+            return [], []
+        return [ops[0]], ops[1:]
+
+    def _parse_operand_list(self, ty: PtxType):
+        yield self._parse_operand(ty)
+        while self.accept("COMMA"):
+            yield self._parse_operand(ty)
+
+    def _parse_operand(self, ty: PtxType) -> Operand:
+        t = self.peek()
+        if t.kind == "REG":
+            self.i += 1
+            return Reg(name=t.value, type=ty)
+        if t.kind == "SREG":
+            self.i += 1
+            return Reg(name=t.value, type=PtxType.u32)
+        if t.kind == "NUM":
+            self.i += 1
+            v: int | float = float(t.value) if "." in t.value or "e" in t.value.lower() else (
+                int(t.value, 16) if t.value.startswith(("0x","0X","-0x","-0X")) else int(t.value)
+            )
+            return Imm(value=v, type=ty)
+        if t.kind == "IDENT":
+            # bare identifier — likely a parameter name (used in ld.param)
+            self.i += 1
+            return Reg(name=t.value, type=ty)  # treat as "named" operand
+        raise ParseError(f"{t.file}:{t.line}:{t.col}: unexpected operand token {t.kind} {t.value!r}")
+
+    def _parse_addr(self) -> tuple[Operand, Imm | None]:
+        # [reg]  or  [reg+imm]  or  [reg-imm]  or  [param_name]
+        self.eat("LBRACK")
+        base = self._parse_operand(PtxType.u64)
+        off: Imm | None = None
+        nxt = self.peek()
+        if nxt.kind == "NUM":  # signed-prefixed lexer already handles '-NN'
+            off = Imm(value=int(nxt.value, 0), type=PtxType.s32)
+            self.i += 1
+        elif nxt.kind == "PLUS":
+            self.i += 1  # consume '+'
+            num_tok = self.eat("NUM")
+            off = Imm(value=int(num_tok.value, 0), type=PtxType.s32)
+        self.eat("RBRACK")
+        return base, off
 
 
 def parse(src: str, file: str = "<input>") -> Kernel:

@@ -1,0 +1,52 @@
+// examples/smem_vs_l1_demo/kernel_no_smem.ptx
+// 16x16 matmul WITHOUT shared memory; relies on L1 cache to hold reused data.
+.visible .entry matmul_no_smem(.param .u64 A, .param .u64 B, .param .u64 C)
+{
+    .reg .u32 %r<16>;
+    .reg .u64 %rd<10>;
+    .reg .f32 %f<8>;
+    .reg .pred %p<2>;
+
+    ld.param.u64 %rd1, [A];
+    ld.param.u64 %rd2, [B];
+    ld.param.u64 %rd3, [C];
+
+    mov.u32 %r1, %tid.x;        // col
+    mov.u32 %r2, %tid.y;        // row
+
+    mov.f32 %f3, 0.0;           // accumulator
+    mov.u32 %r7, 0;             // k = 0
+LOOP:
+    setp.ge.s32 %p1, %r7, 16;
+    @%p1 bra DONE_LOOP;
+
+    // A[row][k] = A + (row*16 + k) * 4
+    shl.b32 %r8, %r2, 4;
+    add.s32 %r9, %r8, %r7;
+    shl.b32 %r10, %r9, 2;
+    cvt.u64.u32 %rd4, %r10;
+    add.u64 %rd5, %rd1, %rd4;
+    ld.global.f32 %f4, [%rd5];
+
+    // B[k][col] = B + (k*16 + col) * 4
+    shl.b32 %r11, %r7, 4;
+    add.s32 %r12, %r11, %r1;
+    shl.b32 %r13, %r12, 2;
+    cvt.u64.u32 %rd6, %r13;
+    add.u64 %rd7, %rd2, %rd6;
+    ld.global.f32 %f5, [%rd7];
+
+    fma.f32 %f3, %f4, %f5, %f3;
+    add.s32 %r7, %r7, 1;
+    bra LOOP;
+DONE_LOOP:
+
+    // C[row][col] = acc
+    shl.b32 %r3, %r2, 4;
+    add.s32 %r4, %r3, %r1;
+    shl.b32 %r5, %r4, 2;
+    cvt.u64.u32 %rd4, %r5;
+    add.u64 %rd5, %rd3, %rd4;
+    st.global.f32 [%rd5], %f3;
+    bar.sync 0;
+}

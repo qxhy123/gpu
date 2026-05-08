@@ -31,7 +31,8 @@ class SMRunResult:
 
 
 class SM:
-    def __init__(self, cfg, recorder: object | None = None):
+    def __init__(self, cfg, sm_id: int = 0, recorder: object | None = None,
+                 l2=None, hbm=None):
         # M1 transitional shim: accept DeviceConfig and extract sm + inject cache/hbm
         from gpusim.config.schema import DeviceConfig
         if isinstance(cfg, DeviceConfig):
@@ -40,7 +41,18 @@ class SM:
             sm_cfg._hbm_for_run = cfg.hbm
             cfg = sm_cfg
         self.cfg = cfg
+        self.sm_id = sm_id
         self.recorder = recorder
+        self.l2 = l2
+        self.hbm = hbm
+        self._active_warps: list = []
+        self._active_cta_ids: set = set()
+
+    def can_admit_cta(self, occ) -> bool:
+        return len(self._active_cta_ids) < occ.active_ctas
+
+    def active_warp_count(self) -> int:
+        return sum(1 for w in self._active_warps if not w.finished)
 
     def run(self, kernel, grid, block, params, regs_per_thread: int = 16,
             smem_per_cta: int = 0) -> SMRunResult:
@@ -74,16 +86,21 @@ class SM:
         from gpusim.core.cache.l2 import L2Cache
         from gpusim.core.hbm import HBM
         from gpusim.config.schema import CacheConfig, HBMConfig
-        # M1 transitional shim: cache/hbm injected via transient attrs by api.py
-        cache_cfg = (getattr(self.cfg, "_cache_for_run", None)
-                      or getattr(self.cfg, "cache", None)
-                      or CacheConfig())
-        hbm_cfg = (getattr(self.cfg, "_hbm_for_run", None)
-                    or getattr(self.cfg, "hbm", None)
-                    or HBMConfig())
-        hbm = HBM(hbm_cfg, recorder=self.recorder)
-        l2 = L2Cache(cache_cfg, hbm, recorder=self.recorder)
-        l1 = L1Cache(cache_cfg, l2, recorder=self.recorder)
+        # Lazy-construct L2/HBM if not externally injected
+        if self.l2 is None or self.hbm is None:
+            # M1 transitional shim: cache/hbm injected via transient attrs by api.py
+            cache_cfg = (getattr(self.cfg, "_cache_for_run", None)
+                          or getattr(self.cfg, "cache", None)
+                          or CacheConfig())
+            hbm_cfg = (getattr(self.cfg, "_hbm_for_run", None)
+                        or getattr(self.cfg, "hbm", None)
+                        or HBMConfig())
+            self.hbm = HBM(hbm_cfg, recorder=self.recorder)
+            self.l2 = L2Cache(cache_cfg, self.hbm, recorder=self.recorder)
+        # Use injected/lazy refs
+        hbm = self.hbm
+        l2 = self.l2
+        l1 = L1Cache(l2.cfg, l2, recorder=self.recorder)
 
         # Per-warp-group state for wgmma
         from gpusim.core.tensor_core.wgmma import WgmmaQueue

@@ -26,7 +26,8 @@ def test_full_outstanding_queue_causes_structural_stall():
     k = parse(src, "<t>")
     sm = SM(cfg)
     res = sm.run(kernel=k, grid=(1,1,1), block=(32,1,1), params={"A": arr})
-    # With L1 cache miss latency ~205 cycles, lsu_outstanding=2 still causes
-    # significant stalls — the 3rd+ loads must wait for earlier ones to drain.
-    # Old threshold was >400 (fixed 400-cycle latency); now >100 is sufficient.
-    assert res.cycles > 100
+    # With real HBM row_miss_latency=30 (+L2 install 10 + L1 miss check 5 = 45 cy),
+    # lsu_outstanding=2 forces the 3rd+ loads to stall until earlier ones drain.
+    # Without limit: ~21 cycles; with limit=2: ~64 cycles.
+    # Threshold >30 is safely above the no-limit baseline.
+    assert res.cycles > 30

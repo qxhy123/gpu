@@ -1,5 +1,6 @@
 from __future__ import annotations
 from collections import defaultdict
+from types import SimpleNamespace
 from typing import Iterator
 from .events import (
     WarpStateSegment, InstrIssueEvent, SmemEvent, GmemEvent,
@@ -99,3 +100,21 @@ class Recorder:
 
     def bar_events(self) -> list[BarEvent]:
         return list(self._bar)
+
+    # ------------------------------------------------------------------
+    # HBM access scaffold (T12).  T14 will replace with real HBMEvent.
+    # ------------------------------------------------------------------
+    def hbm_access(self, *, cycle, served_at, addr, channel, bank, row,
+                   kind, row_kind, queue_wait) -> None:
+        if not hasattr(self, '_hbm'):
+            self._hbm = []
+        self._hbm.append(SimpleNamespace(
+            cycle=cycle, served_at=served_at, addr=addr,
+            channel=channel, bank=bank, row=row,
+            kind=kind, row_kind=row_kind, queue_wait=queue_wait,
+        ))
+
+    def hbm_accesses(self):
+        if not hasattr(self, '_hbm'):
+            return []
+        return list(self._hbm)

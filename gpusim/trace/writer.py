@@ -70,3 +70,42 @@ def write_parquet(rec: Recorder, out: str | Path) -> None:
         "taken_mask": [e.taken_mask for e in d_evs],
     })
     pq.write_table(tbl_d, out / "div.parquet")
+
+    # Phase 2: l1 / l2 / hbm
+    l1_evs = rec.l1_accesses()
+    tbl_l1 = pa.table({
+        "cycle":     [e.cycle for e in l1_evs],
+        "warp_id":   [e.warp_id for e in l1_evs],
+        "kind":      [e.kind for e in l1_evs],
+        "line_addr": [e.line_addr for e in l1_evs],
+        "set_idx":   [e.set_idx for e in l1_evs],
+        "way":       [e.way for e in l1_evs],
+        "mshr_slot": [e.mshr_slot if e.mshr_slot is not None else -1
+                      for e in l1_evs],
+    })
+    pq.write_table(tbl_l1, out / "l1.parquet")
+
+    l2_evs = rec.l2_accesses()
+    tbl_l2 = pa.table({
+        "cycle":       [e.cycle for e in l2_evs],
+        "kind":        [e.kind for e in l2_evs],
+        "line_addr":   [e.line_addr for e in l2_evs],
+        "set_idx":     [e.set_idx for e in l2_evs],
+        "way":         [e.way for e in l2_evs],
+        "victim_addr": [e.victim_addr for e in l2_evs],
+    })
+    pq.write_table(tbl_l2, out / "l2.parquet")
+
+    hbm_evs = rec.hbm_accesses()
+    tbl_hbm = pa.table({
+        "cycle":      [e.cycle for e in hbm_evs],
+        "served_at":  [e.served_at for e in hbm_evs],
+        "addr":       [e.addr for e in hbm_evs],
+        "channel":    [e.channel for e in hbm_evs],
+        "bank":       [e.bank for e in hbm_evs],
+        "row":        [e.row for e in hbm_evs],
+        "kind":       [e.kind for e in hbm_evs],
+        "row_kind":   [e.row_kind for e in hbm_evs],
+        "queue_wait": [e.queue_wait for e in hbm_evs],
+    })
+    pq.write_table(tbl_hbm, out / "hbm.parquet")

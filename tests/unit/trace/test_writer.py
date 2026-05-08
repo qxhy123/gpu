@@ -28,3 +28,24 @@ def test_write_parquet_creates_three_tables(tmp_path):
     df = pq.read_table(out / "warp_state.parquet").to_pandas()
     # pc=0 ISSUED and pc=1 ISSUED are different PCs → separate segments; plus SCOREBOARD = 3
     assert len(df) == 3  # three segments (different-PC ISSUED entries are not merged)
+
+
+def test_write_parquet_creates_phase2_tables(tmp_path):
+    from gpusim.trace.recorder import Recorder
+    from gpusim.trace.writer import write_parquet
+    import pyarrow.parquet as pq
+    r = Recorder()
+    r.l1_access(cycle=10, warp_id=0, kind="HIT",
+                line_addr=0x100, set_idx=0, way=0)
+    r.l2_access(cycle=15, kind="HIT", line_addr=0x100, set_idx=0, way=0)
+    r.hbm_access(cycle=30, served_at=160, addr=0x100, channel=2, bank=5, row=42,
+                 kind="READ", row_kind="ROW_MISS", queue_wait=5)
+    out = tmp_path / "trace"
+    write_parquet(r, out)
+    assert (out / "l1.parquet").exists()
+    assert (out / "l2.parquet").exists()
+    assert (out / "hbm.parquet").exists()
+    df = pq.read_table(out / "l1.parquet").to_pandas()
+    assert len(df) == 1
+    df = pq.read_table(out / "hbm.parquet").to_pandas()
+    assert df.iloc[0]["channel"] == 2

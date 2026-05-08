@@ -82,6 +82,7 @@ class Device:
         while True:
             for sm in sms:
                 sm.step_cycle(cycle)
+            l2.tick(now=cycle)
             _try_dispatch()
             cycle += 1
             if (cta_pointer >= len(cta_queue)

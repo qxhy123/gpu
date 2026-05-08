@@ -322,6 +322,7 @@ class SM:
 
         while True:
             self.step_cycle(cycle)
+            self.l2.tick(now=cycle)
             _try_dispatch()
             cycle += 1
             if cta_pointer >= len(cta_queue) and not self.has_active_warps():

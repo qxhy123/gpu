@@ -56,9 +56,9 @@ class SM:
         from gpusim.core.cache.l1 import L1Cache
         from gpusim.core.cache.l2 import L2Cache
         from gpusim.core.hbm import HBM
-        hbm = HBM(self.cfg.hbm)
-        l2 = L2Cache(self.cfg.cache, hbm)
-        l1 = L1Cache(self.cfg.cache, l2)
+        hbm = HBM(self.cfg.hbm, recorder=self.recorder)
+        l2 = L2Cache(self.cfg.cache, hbm, recorder=self.recorder)
+        l1 = L1Cache(self.cfg.cache, l2, recorder=self.recorder)
 
         sub_cores: list[SubCore] = [
             SubCore(i, self.cfg, executor, [], recorder=self.recorder, l1=l1)

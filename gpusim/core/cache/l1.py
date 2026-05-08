@@ -36,9 +36,10 @@ AccessResult = Hit | MissNewMSHR | MissMergeMSHR | Reject
 
 
 class L1Cache:
-    def __init__(self, cfg: CacheConfig, l2: L2Protocol):
+    def __init__(self, cfg: CacheConfig, l2: L2Protocol, recorder=None):
         self.cfg = cfg
         self.l2 = l2
+        self._recorder = recorder
         self._line_bytes = cfg.l1_line_bytes
         self._n_lines = cfg.l1_size_bytes // cfg.l1_line_bytes
         self._n_sets = self._n_lines // cfg.l1_ways
@@ -60,19 +61,30 @@ class L1Cache:
         # HIT
         if line is not None:
             self._sets[set_idx].touch(line)
+            way = self._sets[set_idx]._lines.index(line)
             if mode == "store":
                 self.l2.write_through(line_addr=line_addr, now=now)
+            if self._recorder is not None:
+                self._recorder.l1_access(cycle=now, warp_id=warp_id, kind="HIT",
+                                         line_addr=line_addr, set_idx=set_idx, way=way)
             return Hit(ready_at=now + (1 if mode == "store" else self.cfg.l1_hit_latency))
 
         # store-miss: write-through to L2, no-write-allocate at L1
         if mode == "store":
             self.l2.write_through(line_addr=line_addr, now=now)
+            # no L1 event for store-miss bypass (line wasn't in L1)
             return Hit(ready_at=now + 1)
 
         # load miss — try MSHR merge
         existing = self._mshr.find_for_line(line_addr)
         if existing is not None:
             existing.add_waiter(warp_id=warp_id, dst_regs=dst_regs)
+            if self._recorder is not None:
+                self._recorder.l1_access(
+                    cycle=now, warp_id=warp_id, kind="MISS_MERGE",
+                    line_addr=line_addr, set_idx=set_idx, way=-1,
+                    mshr_slot=existing.slot_id,
+                )
             return MissMergeMSHR(ready_at=existing.expected_complete,
                                  mshr_slot=existing.slot_id)
 
@@ -86,6 +98,12 @@ class L1Cache:
             line_addr=line_addr, issued_at=now, expected=expected_complete,
             warp_id=warp_id, dst_regs=dst_regs,
         )
+        if self._recorder is not None:
+            self._recorder.l1_access(
+                cycle=now, warp_id=warp_id, kind="MISS_NEW",
+                line_addr=line_addr, set_idx=set_idx, way=-1,
+                mshr_slot=mshr.slot_id,
+            )
         # schedule install
         self._pending_installs.append((line_addr, expected_complete))
         return MissNewMSHR(ready_at=expected_complete, mshr_slot=mshr.slot_id)

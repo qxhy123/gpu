@@ -25,6 +25,8 @@ class FUSet:
         if op.startswith("wgmma."):
             # wgmma.fence/commit_group/wait_group: TC stream-control, route to TC
             return FUKind.TC
+        if op.startswith("cp.async.bulk.commit_group") or op.startswith("cp.async.bulk.wait_group"):
+            return FUKind.LSU
         if op.startswith("cp.async.bulk."):
             return FUKind.LSU
         if op.startswith("mbarrier."):

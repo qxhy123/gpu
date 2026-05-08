@@ -147,3 +147,22 @@ def test_parser_mbarrier_ops():
     assert k.instrs[0].op == "mbarrier.init.shared::cta"
     assert k.instrs[1].op == "mbarrier.arrive.shared::cta"
     assert k.instrs[2].op == "mbarrier.try_wait.parity.shared::cta"
+
+
+def test_parser_cp_async_bulk_store():
+    from gpusim.frontend.parser import parse
+    src = """
+.entry test() {
+    .reg .u64 %rd<3>;
+    cp.async.bulk.tensor.2d.global.shared::cta [%rd0], [%rd1];
+    cp.async.bulk.commit_group;
+    cp.async.bulk.wait_group 0;
+}
+"""
+    k = parse(src, "<test>")
+    assert len(k.instrs) == 3
+    assert k.instrs[0].op == "cp.async.bulk.tensor.2d.global.shared::cta"
+    assert k.instrs[1].op == "cp.async.bulk.commit_group"
+    assert k.instrs[2].op == "cp.async.bulk.wait_group"
+    from gpusim.frontend.ir import Imm
+    assert isinstance(k.instrs[2].src[0], Imm) and k.instrs[2].src[0].value == 0

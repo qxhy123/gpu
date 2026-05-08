@@ -219,10 +219,11 @@ class _Parser:
             return [], [n_imm]
 
         if op.startswith("cp.async.bulk.tensor."):
-            # cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes
-            # [smem_dst], [desc], [mbar];
+            # Load form has "mbarrier::complete_tx::bytes" in opcode (3 args).
+            # Store form (Phase 4) ends in "global.shared::cta" (2 args).
+            n_args = 3 if "mbarrier" in op else 2
             srcs: list = []
-            for _ in range(3):
+            for _ in range(n_args):
                 self.eat("LBRACK")
                 addr = self._parse_operand(PtxType.u64)
                 self.eat("RBRACK")
@@ -230,6 +231,12 @@ class _Parser:
                 if not self.accept("COMMA"):
                     break
             return [], srcs
+
+        if op == "cp.async.bulk.commit_group":
+            return [], []
+        if op == "cp.async.bulk.wait_group":
+            n_imm = self._parse_operand(PtxType.s32)
+            return [], [n_imm]
 
         if op.startswith("mbarrier.init."):
             self.eat("LBRACK"); addr = self._parse_operand(PtxType.u64); self.eat("RBRACK")

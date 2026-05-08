@@ -164,6 +164,20 @@ class _Parser:
         return PtxType.b32  # fallback for branches and bar.sync etc.
 
     def _parse_operands(self, op: str, ty: PtxType) -> tuple[list[Operand], list]:
+        if op == "gpusim.tma_desc":
+            # gpusim.tma_desc %handle, %gmem_base, dim_x, dim_y, stride_y, elem_bytes;
+            handle = self._parse_operand(PtxType.u64)
+            self.eat("COMMA")
+            gmem_base = self._parse_operand(PtxType.u64)
+            self.eat("COMMA")
+            dim_x = self._parse_operand(PtxType.s32)
+            self.eat("COMMA")
+            dim_y = self._parse_operand(PtxType.s32)
+            self.eat("COMMA")
+            stride_y = self._parse_operand(PtxType.s32)
+            self.eat("COMMA")
+            elem_bytes = self._parse_operand(PtxType.s32)
+            return [handle], [gmem_base, dim_x, dim_y, stride_y, elem_bytes]
         if op == "bra" or op.endswith(".bra"):
             # bra LABEL;
             label = self._parse_operand(ty)

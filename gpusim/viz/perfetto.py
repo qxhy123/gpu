@@ -46,6 +46,65 @@ def build_perfetto(rec: Recorder) -> dict:
             "args": {"cta_id": e.cta_id, "barrier_id": e.barrier_id},
         })
 
+    # Phase 3: TC track (per warp-group / per warp)
+    for ev in rec.wgmma_events:
+        if ev.kind == "ISSUE":
+            events.append({
+                "name": f"wgmma {ev.precision}",
+                "cat": "tc",
+                "ph": "X",
+                "ts": ev.cycle,
+                "dur": max(1, ev.completion_at - ev.cycle),
+                "pid": f"TC_wg{ev.warp_group_id}",
+                "tid": "wgmma",
+                "args": {"shape": f"m{ev.shape_m}n{ev.shape_n}k{ev.shape_k}"},
+            })
+        elif ev.kind == "WAIT_GROUP":
+            events.append({
+                "name": "wait_group",
+                "cat": "tc",
+                "ph": "i",
+                "ts": ev.cycle,
+                "pid": f"TC_wg{ev.warp_group_id}",
+                "tid": "wgmma",
+            })
+
+    for ev in rec.mma_events:
+        events.append({
+            "name": f"mma {ev.precision}",
+            "cat": "tc",
+            "ph": "i",
+            "ts": ev.cycle,
+            "pid": f"TC_w{ev.warp_id}",
+            "tid": "mma",
+        })
+
+    # TMA track (per CTA — TmaEvent doesn't store cta_id; use placeholder)
+    for ev in rec.tma_events:
+        events.append({
+            "name": "tma_copy",
+            "cat": "tma",
+            "ph": "X",
+            "ts": ev.cycle,
+            "dur": max(1, ev.completion_at - ev.cycle),
+            "pid": "TMA_cta_unknown",
+            "tid": "tma",
+            "args": {"bytes": ev.bytes_total},
+        })
+
+    # Mbarrier flip track (per CTA)
+    for ev in rec.mbarrier_events:
+        if ev.kind == "FLIP":
+            events.append({
+                "name": "flip",
+                "cat": "barrier",
+                "ph": "i",
+                "ts": ev.cycle,
+                "pid": f"Barrier_cta{ev.cta_id}",
+                "tid": "mbar",
+                "args": {"phase": ev.phase},
+            })
+
     return {"traceEvents": events, "displayTimeUnit": "ns"}
 
 

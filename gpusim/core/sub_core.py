@@ -37,6 +37,11 @@ def _dst_regs(instr: Instr) -> list[str]:
     return out
 
 
+def _make_queue(cfg):
+    from gpusim.core.tensor_core.wgmma import WgmmaQueue
+    return WgmmaQueue(capacity=cfg.tensor_core.wgmma_queue_capacity)
+
+
 @dataclass
 class SubCore:
     sub_core_id: int
@@ -45,6 +50,8 @@ class SubCore:
     warps: list[Warp]
     recorder: object | None = None
     l1: object | None = None  # L1Cache, optional for backward compat with Phase 1 tests
+    wgmma_queues: dict | None = None  # dict[warp_group_id -> WgmmaQueue]
+    smem: object | None = None
 
     def __post_init__(self):
         self.fus = FUSet(self.cfg.fu)
@@ -73,6 +80,31 @@ class SubCore:
             w.outstanding_loads = [c for c in w.outstanding_loads if c > now]
             if len(w.outstanding_loads) >= self.cfg.fu.lsu_outstanding:
                 return False, StallReason.STRUCTURAL
+        # wgmma: warp must wait until all 4 warps in its warp-group reach this PC
+        if instr.op.startswith("wgmma.mma_async."):
+            if self.wgmma_queues is not None:
+                q = self.wgmma_queues.setdefault(
+                    w.warp_group_id, _make_queue(self.cfg))
+                if len(q.in_flight) >= q.capacity:
+                    return False, StallReason.WGMMA_QUEUE_FULL
+            # Mark this warp as pending at this PC; SM will check group completeness
+            w.wgmma_pending_pc = pc
+            # Until all 4 warps arrive, this warp is not "ready" — use BARRIER state
+            return False, StallReason.BARRIER
+        # wgmma.wait_group: warp waits until enough groups have completed
+        if instr.op == "wgmma.wait_group.sync.aligned":
+            if self.wgmma_queues is None:
+                return True, StallReason.ISSUED  # no queues, treat as no-op
+            q = self.wgmma_queues.get(w.warp_group_id)
+            if q is None:
+                return True, StallReason.ISSUED
+            # extract immediate N from src[0]
+            target_n = int(instr.src[0].value)
+            # Drain done groups every cycle (controller in SM also drains)
+            q.drain_completed_groups(now=now)
+            if q.must_wait(target_n):
+                return False, StallReason.WGMMA_WAIT
+            return True, StallReason.ISSUED
         for r in _src_regs(instr):
             if w.scoreboard.has_pending(r, now):
                 if w.scoreboard.origin_of(r) == "mem":
@@ -216,6 +248,37 @@ class SubCore:
             if isinstance(dst, RegGroup):
                 for r in dst.regs:
                     w.scoreboard.mark_write(r.name, now + latency, origin="tc")
+            w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
+            return
+        if op == "wgmma.fence.sync.aligned":
+            if self.recorder is not None:
+                self.recorder.instr_issue(
+                    cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
+                    src_loc=(instr.src_loc.file, instr.src_loc.line),
+                    active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                )
+            w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
+            return
+        if op == "wgmma.commit_group.sync.aligned":
+            if self.wgmma_queues is not None:
+                q = self.wgmma_queues.setdefault(w.warp_group_id, _make_queue(self.cfg))
+                q.commit_group()
+            if self.recorder is not None:
+                self.recorder.instr_issue(
+                    cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
+                    src_loc=(instr.src_loc.file, instr.src_loc.line),
+                    active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                )
+            w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
+            return
+        if op == "wgmma.wait_group.sync.aligned":
+            # _is_ready already returned ISSUED (drain succeeded) before we get here
+            if self.recorder is not None:
+                self.recorder.instr_issue(
+                    cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
+                    src_loc=(instr.src_loc.file, instr.src_loc.line),
+                    active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                )
             w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return
         # functional execution

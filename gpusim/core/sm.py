@@ -12,6 +12,16 @@ from gpusim.core.sub_core import SubCore
 from gpusim.frontend.ir import Kernel
 
 
+def _read_smem_matrix(smem, cta_id: int, base: int, rows: int, cols: int,
+                      dtype) -> np.ndarray:
+    """Read a row-major rows×cols matrix from shared memory."""
+    from gpusim.core.tensor_core.precision import storage_bytes, numpy_dtype_for
+    elem = storage_bytes(dtype)
+    nbytes = rows * cols * elem
+    raw = bytes(smem._cta[cta_id][base:base + nbytes])
+    return np.frombuffer(raw, dtype=numpy_dtype_for(dtype)).reshape(rows, cols).copy()
+
+
 @dataclass
 class SMRunResult:
     cycles: int
@@ -60,8 +70,13 @@ class SM:
         l2 = L2Cache(self.cfg.cache, hbm, recorder=self.recorder)
         l1 = L1Cache(self.cfg.cache, l2, recorder=self.recorder)
 
+        # Per-warp-group state for wgmma
+        from gpusim.core.tensor_core.wgmma import WgmmaQueue
+        wgmma_queues: dict[int, WgmmaQueue] = {}
+
         sub_cores: list[SubCore] = [
-            SubCore(i, self.cfg, executor, [], recorder=self.recorder, l1=l1)
+            SubCore(i, self.cfg, executor, [], recorder=self.recorder, l1=l1,
+                    wgmma_queues=wgmma_queues, smem=smem)
             for i in range(self.cfg.sub_cores)
         ]
 
@@ -113,6 +128,72 @@ class SM:
                     for w in non_done:
                         w.stack.update_top_pc(w.barrier_pc + 1); w.stack.maybe_pop()
                         w.barrier_pc = -1
+
+            # Phase 3: warp-group wgmma sync coordination
+            from gpusim.core.tensor_core.wgmma import (
+                InflightWgmma, execute_wgmma_for_group,
+            )
+            from gpusim.core.tensor_core.mma_spec import parse_mma_op
+            by_wg: dict[int, list[Warp]] = {}
+            for w in active_warps:
+                by_wg.setdefault(w.warp_group_id, []).append(w)
+            for wg_id, ws in by_wg.items():
+                non_done = [w for w in ws if not w.finished]
+                if not non_done or len(non_done) < 4:
+                    continue
+                if all(w.wgmma_pending_pc >= 0 for w in non_done):
+                    # All 4 warps arrived at the same wgmma. Issue.
+                    pc = non_done[0].wgmma_pending_pc
+                    instr = non_done[0].kernel.instrs[pc]
+                    spec = parse_mma_op(instr.op)
+                    if spec is not None and spec.is_async:
+                        cta_id = non_done[0].cta_id
+                        # Resolve A/B descriptors: src[0] is A reg (u64 smem offset),
+                        # src[1] is B reg. Thread 0 of warp 0 holds the descriptor.
+                        a_desc = instr.src[0]
+                        b_desc = instr.src[1]
+                        a_base = non_done[0].fn_state.threads[0].get_u64(a_desc.name)
+                        b_base = non_done[0].fn_state.threads[0].get_u64(b_desc.name)
+                        a_arr = _read_smem_matrix(
+                            smem, cta_id, base=a_base,
+                            rows=spec.m, cols=spec.k, dtype=spec.dtype_a)
+                        b_arr = _read_smem_matrix(
+                            smem, cta_id, base=b_base,
+                            rows=spec.k, cols=spec.n, dtype=spec.dtype_b)
+                        dst_grp = instr.dst[0]
+                        c_grp = instr.src[2] if len(instr.src) > 2 else dst_grp
+                        execute_wgmma_for_group(
+                            spec=spec, warps=[w.fn_state for w in non_done],
+                            a_smem_array=a_arr, b_smem_array=b_arr,
+                            dst_per_warp=tuple([dst_grp] * 4),
+                            c_per_warp=tuple([c_grp] * 4),
+                        )
+                        # Push InflightWgmma to queue
+                        q = wgmma_queues.setdefault(wg_id, WgmmaQueue(
+                            capacity=self.cfg.tensor_core.wgmma_queue_capacity))
+                        f = InflightWgmma(
+                            issued_at=cycle,
+                            completion_at=cycle + self.cfg.tensor_core.tc_wgmma_latency,
+                            dst_regs=tuple(
+                                tuple(r.name for r in dst_grp.regs)
+                                for _ in range(4)),
+                        )
+                        q.try_push(f)
+                        # Advance all 4 warps' PCs and reset pending flag
+                        for w in non_done:
+                            w.stack.update_top_pc(pc + 1); w.stack.maybe_pop()
+                            w.wgmma_pending_pc = -1
+                        if self.recorder is not None:
+                            self.recorder.instr_issue(
+                                cycle=cycle, warp_id=non_done[0].warp_id,
+                                pc=pc, op=instr.op,
+                                src_loc=(instr.src_loc.file, instr.src_loc.line),
+                                active_mask=non_done[0].fn_state.active_mask,
+                            )
+
+            # Drain wgmma queues each cycle
+            for wg_id, q in wgmma_queues.items():
+                q.drain_completed_groups(now=cycle)
 
             retiring = []
             for cid, ws in by_cta.items():

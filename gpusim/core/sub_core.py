@@ -52,6 +52,9 @@ class SubCore:
     l1: object | None = None  # L1Cache, optional for backward compat with Phase 1 tests
     wgmma_queues: dict | None = None  # dict[warp_group_id -> WgmmaQueue]
     smem: object | None = None
+    mbarrier_pools: dict | None = None       # cta_id -> MbarrierPool
+    tma_descriptor_pool: object | None = None
+    hbm: object | None = None                # for TMA latency
 
     def __post_init__(self):
         self.fus = FUSet(self.cfg.fu)
@@ -281,6 +284,117 @@ class SubCore:
                 )
             w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return
+        if op == "gpusim.tma_desc":
+            # Resolve gmem_base register from lane 0 (warp-uniform)
+            gmem_base_reg = instr.src[0]
+            gmem_base = w.fn_state.threads[0].get_u64(gmem_base_reg.name)
+            dim_x = int(instr.src[1].value)
+            dim_y = int(instr.src[2].value)
+            stride_y = int(instr.src[3].value)
+            elem_bytes = int(instr.src[4].value)
+            handle = self.tma_descriptor_pool.allocate(
+                gmem_base=gmem_base, dim_x=dim_x, dim_y=dim_y,
+                stride_y=stride_y, elem_bytes=elem_bytes,
+            )
+            # Write handle to dst reg in all lanes (warp-uniform value)
+            handle_reg = instr.dst[0]
+            for t in w.fn_state.threads:
+                t.set_u64(handle_reg.name, handle)
+            if self.recorder is not None:
+                self.recorder.instr_issue(
+                    cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
+                    src_loc=(instr.src_loc.file, instr.src_loc.line),
+                    active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                )
+            w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
+            return
+
+        if op.startswith("cp.async.bulk.tensor."):
+            from gpusim.core.tma import do_bulk_copy_2d
+            # src[0] = smem_dst reg, src[1] = descriptor reg, src[2] = mbar reg
+            smem_dst_reg = instr.src[0]
+            desc_reg = instr.src[1]
+            mbar_reg = instr.src[2]
+            smem_dst = w.fn_state.threads[0].get_u64(smem_dst_reg.name)
+            handle = w.fn_state.threads[0].get_u64(desc_reg.name)
+            mbar_addr = w.fn_state.threads[0].get_u64(mbar_reg.name)
+            desc = self.tma_descriptor_pool.lookup(handle)
+            # Functional copy
+            tx_bytes = do_bulk_copy_2d(
+                gmem=self.executor.gmem, smem=self.smem,
+                cta_id=w.cta_id, smem_dst=smem_dst, desc=desc,
+            )
+            # Compute completion_at via HBM if available; else simple estimate
+            n_lines = (tx_bytes + 127) // 128
+            completion_at = now + max(8, n_lines * 4)
+            if self.hbm is not None:
+                latest = now
+                for ln in range(n_lines):
+                    line_addr = (desc.gmem_base + ln * 128) // 128
+                    served = self.hbm.request(line_addr=line_addr, now=now)
+                    latest = max(latest, served)
+                completion_at = latest
+            # Register pending_tx with mbarrier
+            pool = self.mbarrier_pools.get(w.cta_id) if self.mbarrier_pools else None
+            if pool is not None:
+                pool.arrive_tx(smem_addr=mbar_addr, tx_bytes=tx_bytes,
+                               completion_at=completion_at)
+            if self.recorder is not None:
+                self.recorder.instr_issue(
+                    cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
+                    src_loc=(instr.src_loc.file, instr.src_loc.line),
+                    active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                )
+            w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
+            return
+
+        if op.startswith("mbarrier.init."):
+            mbar_addr = w.fn_state.threads[0].get_u64(instr.src[0].name)
+            count = int(instr.src[1].value)
+            pool = self.mbarrier_pools.get(w.cta_id) if self.mbarrier_pools else None
+            if pool is not None:
+                pool.init(smem_addr=mbar_addr, expected=count)
+            if self.recorder is not None:
+                self.recorder.instr_issue(
+                    cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
+                    src_loc=(instr.src_loc.file, instr.src_loc.line),
+                    active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                )
+            w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
+            return
+
+        if op.startswith("mbarrier.arrive."):
+            mbar_addr = w.fn_state.threads[0].get_u64(instr.src[0].name)
+            pool = self.mbarrier_pools.get(w.cta_id) if self.mbarrier_pools else None
+            if pool is not None:
+                pool.arrive(smem_addr=mbar_addr)
+            if self.recorder is not None:
+                self.recorder.instr_issue(
+                    cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
+                    src_loc=(instr.src_loc.file, instr.src_loc.line),
+                    active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                )
+            w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
+            return
+
+        if op.startswith("mbarrier.try_wait."):
+            # dst[0] = pred result reg, src[0] = mbar addr reg, src[1] = expected_phase imm
+            pred_reg = instr.dst[0]
+            mbar_addr = w.fn_state.threads[0].get_u64(instr.src[0].name)
+            expected_phase = int(instr.src[1].value)
+            pool = self.mbarrier_pools.get(w.cta_id) if self.mbarrier_pools else None
+            result = pool.try_wait(smem_addr=mbar_addr, expected_phase=expected_phase) if pool else False
+            for t in w.fn_state.threads:
+                t.set_pred(pred_reg.name, bool(result))
+            if self.recorder is not None:
+                self.recorder.instr_issue(
+                    cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
+                    src_loc=(instr.src_loc.file, instr.src_loc.line),
+                    active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                )
+            w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
+            return
+
         # functional execution
         if self.recorder is not None:
             self.recorder.instr_issue(

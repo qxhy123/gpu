@@ -74,9 +74,17 @@ class SM:
         from gpusim.core.tensor_core.wgmma import WgmmaQueue
         wgmma_queues: dict[int, WgmmaQueue] = {}
 
+        from gpusim.core.mbarrier import MbarrierPool
+        from gpusim.core.tma import TensorDescriptorPool
+        mbarrier_pools: dict[int, MbarrierPool] = {}   # cta_id -> pool
+        tma_descriptor_pool = TensorDescriptorPool()    # per-SM (shared across CTAs)
+
         sub_cores: list[SubCore] = [
             SubCore(i, self.cfg, executor, [], recorder=self.recorder, l1=l1,
-                    wgmma_queues=wgmma_queues, smem=smem)
+                    wgmma_queues=wgmma_queues, smem=smem,
+                    mbarrier_pools=mbarrier_pools,
+                    tma_descriptor_pool=tma_descriptor_pool,
+                    hbm=hbm)
             for i in range(self.cfg.sub_cores)
         ]
 
@@ -94,6 +102,7 @@ class SM:
             # a valid backing buffer, even when smem_per_cta is 0.
             alloc_bytes = smem_per_cta if smem_per_cta > 0 else self.cfg.smem_per_sm_bytes
             smem.allocate_cta(cid, alloc_bytes)
+            mbarrier_pools[cid] = MbarrierPool()
             cta_executor = InstrExecutor(kernel=kernel, gmem=gmem, smem=smem,
                                          params=paramspace, cta_id=cid,
                                          ctaid=ctaid_xyz, nctaid=grid, ntid=block)
@@ -118,6 +127,9 @@ class SM:
             for sc in sub_cores:
                 sc.step(now=cycle)
             l1.install_completed_lines(now=cycle)
+
+            for pool in mbarrier_pools.values():
+                pool.tick(now=cycle)
 
             by_cta: dict[int, list[Warp]] = {}
             for w in active_warps:

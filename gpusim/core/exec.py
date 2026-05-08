@@ -467,6 +467,20 @@ class InstrExecutor:
                 else:                  self.smem.store_u32(self.cta_id, addr, int(v))
             return
 
+        # gpusim.tma_desc — allocate descriptor (only lane 0 acts)
+        if op == "gpusim.tma_desc":
+            # Side-effect handled at SubCore._issue; per-lane is no-op
+            return
+
+        # cp.async.bulk.tensor.2d — handled at SubCore._issue (no per-lane work)
+        if op.startswith("cp.async.bulk.tensor."):
+            return
+
+        # mbarrier.* — handled at SubCore._issue
+        if op.startswith("mbarrier."):
+            # mbarrier.try_wait writes a pred result; that's done at SubCore level.
+            return
+
         raise NotImplementedError(f"opcode {op!r}")
 
 

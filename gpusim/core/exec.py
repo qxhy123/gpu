@@ -476,6 +476,10 @@ class InstrExecutor:
         if op.startswith("cp.async.bulk.tensor."):
             return
 
+        # cp.async.bulk.commit_group / wait_group — no-op per lane (timing side handled elsewhere)
+        if op in ("cp.async.bulk.commit_group", "cp.async.bulk.wait_group"):
+            return
+
         # mbarrier.* — handled at SubCore._issue
         if op.startswith("mbarrier."):
             # mbarrier.try_wait writes a pred result; that's done at SubCore level.
@@ -647,10 +651,15 @@ def _exec_mbarrier_fn(w: WarpFnState, instr: "Instr",
             t.set_pred(pred_reg.name, bool(result))
 
 
+def _is_bulk_store_op(op: str) -> bool:
+    """Return True for cp.async.bulk.tensor store form (shared→global)."""
+    return op.startswith("cp.async.bulk.tensor.") and "global.shared" in op
+
+
 def _is_tma_mbarrier_op(op: str) -> bool:
     """Return True for warp-group-uniform TMA / mbarrier ops that need single execution."""
     return (op == "gpusim.tma_desc" or
-            op.startswith("cp.async.bulk.tensor.") or
+            (op.startswith("cp.async.bulk.tensor.") and "global.shared" not in op) or
             op.startswith("mbarrier."))
 
 
@@ -717,9 +726,27 @@ def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
                         st.update_top_pc(pc + 1); st.maybe_pop()
                         progressed = True
                         continue
+                    # cp.async.bulk commit/wait: no-op in functional mode
+                    if op in ("cp.async.bulk.commit_group",
+                              "cp.async.bulk.wait_group"):
+                        st.update_top_pc(pc + 1); st.maybe_pop()
+                        progressed = True
+                        continue
                     # wgmma.mma_async: hold until all warps in warp-group arrive
                     if op.startswith("wgmma.mma_async."):
                         wgmma_pcs[i] = pc
+                        continue
+                    # cp.async.bulk.tensor store (shared→global): single-warp, execute immediately
+                    if _is_bulk_store_op(op):
+                        from gpusim.core.tma_store import do_bulk_store_2d
+                        instr = k.instrs[pc]
+                        handle = w.threads[0].get_u64(instr.src[0].name)
+                        smem_src = w.threads[0].get_u64(instr.src[1].name)
+                        desc = fn_tma_pool.lookup(handle)
+                        do_bulk_store_2d(gmem=g, smem=s, cta_id=cta_id,
+                                         smem_src=int(smem_src), desc=desc)
+                        st.update_top_pc(pc + 1); st.maybe_pop()
+                        progressed = True
                         continue
                     # TMA + mbarrier: warp-group-uniform — collect all warps, execute once from warp 0
                     if _is_tma_mbarrier_op(op):
@@ -787,12 +814,19 @@ def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
                     if len(wg_warp_ids) != 4:
                         continue
                     wg_tma_pcs = [tma_pcs[j] for j in wg_warp_ids]
-                    if all(p >= 0 for p in wg_tma_pcs) and len(set(wg_tma_pcs)) == 1:
-                        tma_pc = wg_tma_pcs[0]
+                    # A warp-group can fire when all warps are either done or waiting at same PC
+                    active_pcs = [wg_tma_pcs[k2] for k2, j in enumerate(wg_warp_ids)
+                                  if not done[j]]
+                    if (active_pcs and all(p >= 0 for p in active_pcs)
+                            and len(set(active_pcs)) == 1
+                            and all(done[j] or wg_tma_pcs[k2] >= 0
+                                    for k2, j in enumerate(wg_warp_ids))):
+                        tma_pc = active_pcs[0]
                         instr = k.instrs[tma_pc]
                         op = instr.op
+                        # elect first non-done warp as warp 0
                         wg_warps = [warps[j][0] for j in wg_warp_ids]
-                        w0 = wg_warps[0]  # elected warp: warp 0 of the group
+                        w0 = next(warps[j][0] for j in wg_warp_ids if not done[j])
                         if op == "gpusim.tma_desc":
                             handle = fn_tma_pool.allocate(
                                 gmem_base=w0.threads[0].get_u64(instr.src[0].name),
@@ -806,6 +840,8 @@ def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
                                 for t in ww.threads:
                                     t.set_u64(handle_reg.name, handle)
                         elif op.startswith("cp.async.bulk.tensor."):
+                            # Load form only (store form is handled per-warp above)
+                            # src[0] = smem_dst, src[1] = handle, src[2] = mbar
                             from gpusim.core.tma import do_bulk_copy_2d
                             smem_dst = w0.threads[0].get_u64(instr.src[0].name)
                             handle = w0.threads[0].get_u64(instr.src[1].name)
@@ -830,10 +866,11 @@ def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
                             for ww in wg_warps:
                                 for t in ww.threads:
                                     t.set_pred(pred_reg.name, bool(result))
-                        # Advance all warps past this instruction
-                        for j in wg_warp_ids:
-                            warps[j][1].update_top_pc(tma_pc + 1)
-                            warps[j][1].maybe_pop()
+                        # Advance non-done warps past this instruction
+                        for k2, j in enumerate(wg_warp_ids):
+                            if not done[j]:
+                                warps[j][1].update_top_pc(tma_pc + 1)
+                                warps[j][1].maybe_pop()
                             tma_pcs[j] = -1
                         progressed = True
                 if not progressed:

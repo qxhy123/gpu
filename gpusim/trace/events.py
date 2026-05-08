@@ -165,3 +165,36 @@ class MbarrierEvent:
     arrived: int = 0
     phase: int = 0
     pred_result: bool = False
+
+
+@dataclass(frozen=True)
+class CtaDispatchEvent:
+    cycle: int
+    cta_id: int
+    sm_id: int
+    queue_position: int = 0
+    active_warps_at_dispatch: int = 0
+
+
+@dataclass(frozen=True)
+class L2MshrEvent:
+    kind: str          # "ALLOC" | "MERGE" | "RELEASE" | "FULL"
+    cycle: int
+    line_addr: int
+    sm_id: int
+    n_waiters: int = 0
+
+
+@dataclass(frozen=True)
+class BulkStoreEvent:
+    kind: str          # "ISSUE" | "COMMIT_GROUP" | "WAIT_GROUP" | "DRAIN"
+    cycle: int
+    warp_group_id: int
+    sm_id: int
+    pc: int = 0
+    smem_src: int = 0
+    gmem_base: int = 0
+    bytes_total: int = 0
+    completion_at: int = -1
+    commit_group_id: int = -1
+    wait_n: int = -1

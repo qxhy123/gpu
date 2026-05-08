@@ -76,6 +76,12 @@ class Device:
                     cid, ctaid_xyz, regs_per_thread, smem_per_cta,
                     threads_per_cta, warps_per_cta, cycle,
                 )
+                if self.recorder is not None:
+                    self.recorder.cta_dispatch(
+                        cycle=cycle, cta_id=cid, sm_id=target_sm.sm_id,
+                        queue_position=cta_pointer,
+                        active_warps_at_dispatch=target_sm.active_warp_count(),
+                    )
                 cta_pointer += 1
         _try_dispatch()
 

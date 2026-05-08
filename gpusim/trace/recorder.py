@@ -28,6 +28,9 @@ class Recorder:
         self.wgmma_events: list[WgmmaEvent] = []
         self.tma_events: list[TmaEvent] = []
         self.mbarrier_events: list[MbarrierEvent] = []
+        self.cta_dispatch_events: list = []
+        self.l2_mshr_events: list = []
+        self.bulk_store_events: list = []
 
     def warp_state(self, *, cycle: int, warp_id: int, state: str, pc: int) -> None:
         cur = self._cur_state.get(warp_id)
@@ -125,9 +128,13 @@ class Recorder:
         self._l2.append(L2Event(kind=kind, cycle=cycle, line_addr=line_addr,
                                 set_idx=set_idx, way=way, victim_addr=victim_addr))
 
-    def l2_mshr(self, *, kind, cycle, line_addr, sm_id, n_waiters: int = 0):
-        # T27 will add storage. For now, no-op.
-        pass
+    def l2_mshr(self, *, kind: str, cycle: int, line_addr: int,
+                  sm_id: int, n_waiters: int = 0) -> None:
+        from gpusim.trace.events import L2MshrEvent
+        self.l2_mshr_events.append(L2MshrEvent(
+            kind=kind, cycle=cycle, line_addr=line_addr,
+            sm_id=sm_id, n_waiters=n_waiters,
+        ))
 
     def l2_accesses(self) -> list[L2Event]:
         return list(self._l2)
@@ -180,6 +187,25 @@ class Recorder:
             expected=expected, arrived=arrived, phase=phase, pred_result=pred_result,
         ))
 
-    def bulk_store(self, **kwargs):
-        # T27 will add storage. For now, no-op stub.
-        pass
+    def cta_dispatch(self, *, cycle: int, cta_id: int, sm_id: int,
+                       queue_position: int = 0,
+                       active_warps_at_dispatch: int = 0) -> None:
+        from gpusim.trace.events import CtaDispatchEvent
+        self.cta_dispatch_events.append(CtaDispatchEvent(
+            cycle=cycle, cta_id=cta_id, sm_id=sm_id,
+            queue_position=queue_position,
+            active_warps_at_dispatch=active_warps_at_dispatch,
+        ))
+
+    def bulk_store(self, *, kind: str, cycle: int, warp_group_id: int,
+                     sm_id: int, pc: int = 0,
+                     smem_src: int = 0, gmem_base: int = 0,
+                     bytes_total: int = 0, completion_at: int = -1,
+                     commit_group_id: int = -1, wait_n: int = -1) -> None:
+        from gpusim.trace.events import BulkStoreEvent
+        self.bulk_store_events.append(BulkStoreEvent(
+            kind=kind, cycle=cycle, warp_group_id=warp_group_id, sm_id=sm_id,
+            pc=pc, smem_src=smem_src, gmem_base=gmem_base,
+            bytes_total=bytes_total, completion_at=completion_at,
+            commit_group_id=commit_group_id, wait_n=wait_n,
+        ))

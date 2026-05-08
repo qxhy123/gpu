@@ -1,5 +1,7 @@
 from __future__ import annotations
+from dataclasses import asdict
 from pathlib import Path
+import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from .recorder import Recorder
@@ -168,6 +170,17 @@ def write_parquet(rec: Recorder, out: str | Path) -> None:
             "pred_result": [e.pred_result for e in rec.mbarrier_events],
         })
         pq.write_table(tbl_mbarrier, out / "mbarrier.parquet")
+
+    # Phase 4: cta_dispatch / l2_mshr / bulk_store
+    if rec.cta_dispatch_events:
+        pd.DataFrame([asdict(e) for e in rec.cta_dispatch_events]).to_parquet(
+            out / "cta_dispatch.parquet", index=False)
+    if rec.l2_mshr_events:
+        pd.DataFrame([asdict(e) for e in rec.l2_mshr_events]).to_parquet(
+            out / "l2_mshr.parquet", index=False)
+    if rec.bulk_store_events:
+        pd.DataFrame([asdict(e) for e in rec.bulk_store_events]).to_parquet(
+            out / "bulk_store.parquet", index=False)
 
 
 # write_all is the canonical name used by Phase 3 callers; delegates to write_parquet

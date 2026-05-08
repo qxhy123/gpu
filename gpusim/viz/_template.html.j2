@@ -35,8 +35,36 @@
 <h2>Bank conflict histogram</h2>
 {{ bank_table_html|safe }}
 
+{% if cache_hierarchy_html is defined %}
+<h2>Cache hierarchy hit rate</h2>
+{{ cache_hierarchy_html|safe }}
+<div id="cache_pie"></div>
+
+<h2>HBM channel utilization</h2>
+<div id="channel_util_chart"></div>
+
+<h2>Row buffer locality</h2>
+<div id="row_buffer_pie"></div>
+
+<h2>Write-back traffic</h2>
+<table>
+  <tr><th>READ bytes</th><td>{{ wb_metrics.read_bytes }}</td></tr>
+  <tr><th>WRITE_BACK bytes</th><td>{{ wb_metrics.wb_bytes }}</td></tr>
+  <tr><th>WB fraction</th><td>{{ "%.2f%%" % (wb_metrics.wb_frac * 100) }}</td></tr>
+</table>
+{% endif %}
+
 <script>
 Plotly.newPlot("stall_pie", {{ stall_pie_json|safe }}, {});
 Plotly.newPlot("ipc_line", {{ ipc_line_json|safe }}, {});
+{% if cache_pie_json %}
+Plotly.newPlot("cache_pie", {{ cache_pie_json|safe }}, {});
+{% endif %}
+{% if channel_util_json %}
+Plotly.newPlot("channel_util_chart", {{ channel_util_json|safe }}, {});
+{% endif %}
+{% if row_buffer_json %}
+Plotly.newPlot("row_buffer_pie", {{ row_buffer_json|safe }}, {});
+{% endif %}
 </script>
 </body></html>

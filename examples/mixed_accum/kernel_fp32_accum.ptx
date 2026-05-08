@@ -1,0 +1,131 @@
+// kernel_fp32_accum.ptx
+// mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32
+// A: 16x(16*K_ITERS) fp16, B: (16*K_ITERS)x8 fp16, OUT: 16x8 f32
+// Accumulator is FP32 — full precision is preserved across K-tiles.
+//
+// Lane layout (same as m16n8k16 fragment):
+//   A: lane holds row=tid/2, cols at col_half*8 .. col_half*8+7 (fp16)
+//   B: lane holds row=tid/2, cols at col_half*4 .. col_half*4+3 (fp16)
+//   D: lane holds row=tid/2, cols at col_half*4 .. col_half*4+3 (fp32)
+//
+// A is row-major (16 rows x K_total cols).  Per K-tile k, each lane's
+// starting column is col_half*8 + k*16.  Byte stride per iter = 16*2 = 32.
+//
+// B is row-major (K_total rows x 8 cols).  Per K-tile k, each lane's
+// starting row is tid/2 + k*16.  Byte stride per iter = 16*8*2 = 256.
+.visible .entry test(
+    .param .u64 A,
+    .param .u64 B,
+    .param .u64 OUT,
+    .param .u32 K_ITERS)
+{
+    .reg .u64 %rd<16>;
+    .reg .u32 %r<16>;
+    .reg .f16 %a<8>;
+    .reg .f16 %b<4>;
+    .reg .f32 %d<4>;
+    .reg .f32 %c<4>;
+    .reg .pred %p<2>;
+
+    ld.param.u64 %rd0, [A];
+    ld.param.u64 %rd1, [B];
+    ld.param.u64 %rd2, [OUT];
+    ld.param.u32 %r10, [K_ITERS];
+
+    mov.u32 %r0, %tid.x;              // lane = tid (0..31)
+
+    // row = lane/2,  col_half = lane%2
+    shr.u32 %r1, %r0, 1;              // row = lane/2
+    and.b32 %r2, %r0, 1;              // col_half = lane%2
+
+    // ---- A base address for this lane ----
+    // A is 16 x K_total row-major fp16.
+    // K_total = K_ITERS * 16 (computed at launch as 64*16 = 1024).
+    // Lane column group starts at col_half*8 (within the first K-tile).
+    // byte offset = (row * 1024 + col_half * 8) * 2
+    mul.lo.u32 %r3, %r1, 1024;        // row * K_total
+    shl.b32 %r4, %r2, 3;              // col_half * 8
+    add.u32 %r3, %r3, %r4;            // row*1024 + col_half*8
+    mul.lo.u32 %r3, %r3, 2;           // * 2 bytes/fp16
+    cvt.u64.u32 %rd4, %r3;
+    add.u64 %rd5, %rd0, %rd4;         // lane A base ptr (iter 0 of K-tiles)
+
+    // ---- B base address for this lane ----
+    // B is K_total x 8 row-major fp16.
+    // Lane row group starts at row*8 (within B's first 8 rows).
+    // byte offset = (row * 8 + col_half * 4) * 2
+    mul.lo.u32 %r5, %r1, 8;           // row * 8
+    shl.b32 %r6, %r2, 2;              // col_half * 4
+    add.u32 %r5, %r5, %r6;
+    mul.lo.u32 %r5, %r5, 2;           // * 2 bytes/fp16
+    cvt.u64.u32 %rd6, %r5;
+    add.u64 %rd7, %rd1, %rd6;         // lane B base ptr (iter 0 of K-tiles)
+
+    // ---- Zero-init FP32 accumulators ----
+    mov.f32 %c0, 0.0;
+    mov.f32 %c1, 0.0;
+    mov.f32 %c2, 0.0;
+    mov.f32 %c3, 0.0;
+
+    // ---- K-tile loop ----
+    mov.u32 %r11, 0;                  // k = 0
+
+LOOP:
+    setp.ge.u32 %p0, %r11, %r10;
+    @%p0 bra END;
+
+    // Load A fragment: 8 fp16 values for this lane's row/col_half
+    ld.global.f16 %a0, [%rd5];
+    ld.global.f16 %a1, [%rd5 + 2];
+    ld.global.f16 %a2, [%rd5 + 4];
+    ld.global.f16 %a3, [%rd5 + 6];
+    ld.global.f16 %a4, [%rd5 + 8];
+    ld.global.f16 %a5, [%rd5 + 10];
+    ld.global.f16 %a6, [%rd5 + 12];
+    ld.global.f16 %a7, [%rd5 + 14];
+
+    // Load B fragment: 4 fp16 values for this lane's row/col_half
+    ld.global.f16 %b0, [%rd7];
+    ld.global.f16 %b1, [%rd7 + 2];
+    ld.global.f16 %b2, [%rd7 + 4];
+    ld.global.f16 %b3, [%rd7 + 6];
+
+    // FP32 accumulating mma
+    mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32
+        {%d0, %d1, %d2, %d3},
+        {%a0, %a1, %a2, %a3, %a4, %a5, %a6, %a7},
+        {%b0, %b1, %b2, %b3},
+        {%c0, %c1, %c2, %c3};
+
+    // Carry FP32 accumulators forward
+    mov.f32 %c0, %d0;
+    mov.f32 %c1, %d1;
+    mov.f32 %c2, %d2;
+    mov.f32 %c3, %d3;
+
+    // Advance A ptr: next K-tile is 16 cols further -> 16*2=32 bytes
+    add.u64 %rd5, %rd5, 32;
+
+    // Advance B ptr: next K-tile is 16 rows further -> 16*8*2=256 bytes
+    add.u64 %rd7, %rd7, 256;
+
+    add.u32 %r11, %r11, 1;
+    bra LOOP;
+
+END:
+    // ---- Store FP32 D to OUT ----
+    // OUT is 16x8 row-major f32.
+    // byte offset = (row*8 + col_half*4) * 4
+    shl.b32 %r7, %r2, 2;              // col_half * 4
+    mul.lo.u32 %r8, %r1, 8;           // row * 8
+    add.u32 %r8, %r8, %r7;
+    mul.lo.u32 %r8, %r8, 4;           // * 4 bytes/f32
+    cvt.u64.u32 %rd8, %r8;
+    add.u64 %rd9, %rd2, %rd8;
+    st.global.f32 [%rd9],      %d0;
+    st.global.f32 [%rd9 + 4],  %d1;
+    st.global.f32 [%rd9 + 8],  %d2;
+    st.global.f32 [%rd9 + 12], %d3;
+
+    ret;
+}

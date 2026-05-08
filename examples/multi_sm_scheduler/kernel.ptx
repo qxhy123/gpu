@@ -1,0 +1,49 @@
+// examples/multi_sm_scheduler/kernel.ptx
+// Each CTA computes out[cta*32 + tid] = base[cta*32 + tid] + cta_id.
+// Even-id CTAs (bit 0 of cta_id == 0) run an extra busy loop to create
+// irregular workload, demonstrating the impact of CTA scheduling policies.
+.visible .entry test(.param .u64 BASE, .param .u64 OUT)
+{
+    .reg .u64 %rd<8>;
+    .reg .u32 %r<8>;
+    .reg .f32 %f<4>;
+    .reg .pred %p<2>;
+
+    ld.param.u64 %rd0, [BASE];
+    ld.param.u64 %rd1, [OUT];
+
+    mov.u32 %r0, %ctaid.x;
+    mov.u32 %r1, %tid.x;
+    mov.u32 %r2, %ntid.x;
+
+    // element index = ctaid.x * ntid.x + tid.x
+    mul.lo.s32 %r3, %r0, %r2;
+    add.s32 %r3, %r3, %r1;
+    // byte offset = index * 4
+    mul.lo.s32 %r4, %r3, 4;
+    cvt.u64.u32 %rd4, %r4;
+
+    add.u64 %rd5, %rd0, %rd4;
+    add.u64 %rd6, %rd1, %rd4;
+
+    ld.global.f32 %f0, [%rd5];
+
+    // if (cta_id & 1) == 0: run extra busy loop (even CTAs are heavier)
+    and.b32 %r5, %r0, 1;
+    setp.eq.u32 %p0, %r5, 0;
+    @!%p0 bra SKIP_LOOP;
+    mov.u32 %r6, 0;
+LOOP:
+    setp.ge.u32 %p1, %r6, 64;
+    @%p1 bra SKIP_LOOP;
+    add.u32 %r6, %r6, 1;
+    bra LOOP;
+SKIP_LOOP:
+
+    // out[i] = base[i] + float(cta_id)
+    cvt.f32.s32 %f1, %r0;
+    add.f32 %f0, %f0, %f1;
+
+    st.global.f32 [%rd6], %f0;
+    ret;
+}

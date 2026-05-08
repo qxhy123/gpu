@@ -50,13 +50,36 @@ class Imm:
 
 
 @dataclass(frozen=True)
+class RegGroup:
+    """A `{reg0, reg1, ...}` operand group (e.g., mma matrix fragment)."""
+    regs: tuple["Reg", ...]
+
+
+@dataclass(frozen=True)
+class TensorDescriptor:
+    """Hopper TMA 2D descriptor (simplified — no swizzle, no multicast).
+    IR-level static metadata extracted from `gpusim.tma_desc` instr."""
+    gmem_base_reg: str
+    dim_x: int
+    dim_y: int
+    stride_y: int
+    elem_bytes: int
+
+
+@dataclass(frozen=True)
+class MbarrierHandle:
+    """Pointer to mbarrier in shared memory (smem byte offset)."""
+    smem_addr: int
+
+
+@dataclass(frozen=True)
 class Param:
     name: str
     type: PtxType
 
 
-# operands are reg | imm | param-name (resolved during parse)
-Operand = Reg | Imm
+# operands are reg | imm | reg-group | param-name (resolved during parse)
+Operand = Reg | Imm | RegGroup
 
 
 @dataclass(frozen=True)
@@ -84,7 +107,7 @@ class Instr:
     src: tuple[Operand | str, ...]   # str = label or param name
     pred: Optional[Predicate]
     space: Optional[MemSpace]
-    type: PtxType
+    type: Optional[PtxType]   # None for ops with no type modifier (e.g. wgmma.fence)
     pc: int
     src_loc: SrcLoc
 

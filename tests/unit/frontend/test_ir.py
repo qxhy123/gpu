@@ -64,3 +64,27 @@ def test_ml_dtypes_importable():
     import numpy as np
     assert np.dtype(ml_dtypes.bfloat16).itemsize == 2
     assert np.dtype(ml_dtypes.float8_e4m3fn).itemsize == 1
+
+def test_reg_group_dataclass():
+    from gpusim.frontend.ir import RegGroup, Reg, PtxType
+    g = RegGroup(regs=(Reg("r0", PtxType.f16), Reg("r1", PtxType.f16)))
+    assert len(g.regs) == 2
+    assert g.regs[0].name == "r0"
+
+def test_tensor_descriptor_dataclass():
+    from gpusim.frontend.ir import TensorDescriptor
+    d = TensorDescriptor(gmem_base_reg="rd0", dim_x=128, dim_y=64,
+                          stride_y=512, elem_bytes=2)
+    assert d.dim_x == 128 and d.elem_bytes == 2
+
+def test_mbarrier_handle_dataclass():
+    from gpusim.frontend.ir import MbarrierHandle
+    h = MbarrierHandle(smem_addr=0)
+    assert h.smem_addr == 0
+
+def test_instr_type_is_optional():
+    from gpusim.frontend.ir import Instr, SrcLoc
+    i = Instr(op="wgmma.fence.sync.aligned", dst=(), src=(),
+              pred=None, space=None, type=None, pc=0,
+              src_loc=SrcLoc("<test>", 1))
+    assert i.type is None

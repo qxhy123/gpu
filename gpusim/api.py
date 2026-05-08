@@ -183,22 +183,17 @@ def run(*, ptx_src: str | None = None, ptx_path: str | Path | None = None,
     if mode == "timing":
         from gpusim.frontend.parser import parse
         from gpusim.config.loader import load_default, load_yaml
-        from gpusim.core.sm import SM
+        from gpusim.core.device import Device
         from gpusim.config.schema import DeviceConfig, SMConfig
         cfg = load_default() if config is None else (
             load_yaml(config) if isinstance(config, (str, Path)) else config
         )
-        # Backward-compat: accept legacy SMConfig
         if isinstance(cfg, SMConfig):
             cfg = DeviceConfig(n_sm=1, sm=cfg)
         k = parse(ptx_src, "<inline>")
         rec = Recorder()
-        # M1 transitional shim: inject cache/hbm via transient attrs on sm
-        sm_cfg = cfg.sm
-        sm_cfg._cache_for_run = cfg.cache
-        sm_cfg._hbm_for_run = cfg.hbm
-        sm = SM(sm_cfg, recorder=rec)
-        res = sm.run(kernel=k, grid=grid, block=block, params=params)
+        dev = Device(cfg, recorder=rec)
+        res = dev.run(kernel=k, grid=grid, block=block, params=params)
         return Result(
             outputs=res.outputs, mode="timing",
             metrics={"cycles": res.cycles, "occupancy": res.occupancy},

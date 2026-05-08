@@ -32,3 +32,7 @@ def test_gto_switches_to_oldest_ready_on_stall():
     sched.pick(now=0, candidates=lambda i: True)
     nxt = sched.pick(now=1, candidates=lambda i: i != 0)
     assert nxt == 1
+
+def test_mshr_full_is_a_stall_reason():
+    from gpusim.core.warp import StallReason
+    assert StallReason.MSHR_FULL.value == "MSHR_FULL"

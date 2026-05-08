@@ -17,6 +17,7 @@ class StallReason(Enum):
     BARRIER = "BARRIER"
     PRED_OFF = "PRED_OFF"
     DIVERGENCE_SERIAL = "DIVERGENCE_SERIAL"
+    MSHR_FULL = "MSHR_FULL"
 
 
 @dataclass

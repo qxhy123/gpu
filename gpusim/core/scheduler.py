@@ -34,3 +34,39 @@ class GTOScheduler:
                 return i
         self._current = None
         return None
+
+
+class RRCtaScheduler:
+    """Round-robin CTA→SM dispatch."""
+
+    def __init__(self):
+        self._next = 0
+
+    def pick(self, sms, occ):
+        n = len(sms)
+        if n == 0:
+            return None
+        for _ in range(n):
+            sm = sms[self._next]
+            self._next = (self._next + 1) % n
+            if sm.can_admit_cta(occ):
+                return sm
+        return None
+
+
+class GreedyCtaScheduler:
+    """Greedy load-balanced CTA→SM dispatch — picks SM with fewest active warps."""
+
+    def pick(self, sms, occ):
+        eligible = [sm for sm in sms if sm.can_admit_cta(occ)]
+        if not eligible:
+            return None
+        return min(eligible, key=lambda sm: sm.active_warp_count())
+
+
+def make_cta_scheduler(policy: str):
+    if policy == "rr":
+        return RRCtaScheduler()
+    if policy == "greedy":
+        return GreedyCtaScheduler()
+    raise ValueError(f"unknown cta_policy {policy!r}")

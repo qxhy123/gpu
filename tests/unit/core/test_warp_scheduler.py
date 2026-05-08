@@ -36,3 +36,17 @@ def test_gto_switches_to_oldest_ready_on_stall():
 def test_mshr_full_is_a_stall_reason():
     from gpusim.core.warp import StallReason
     assert StallReason.MSHR_FULL.value == "MSHR_FULL"
+
+
+def test_warp_has_warp_group_id_field():
+    from gpusim.core.warp import Warp
+    w = Warp(warp_id=5, kernel=None)
+    # default warp_group_id = warp_id // 4
+    assert w.warp_group_id == 1
+    assert w.wgmma_pending_pc == -1
+
+
+def test_stall_reason_has_wgmma_tokens():
+    from gpusim.core.warp import StallReason
+    assert StallReason.WGMMA_QUEUE_FULL.value == "WGMMA_QUEUE_FULL"
+    assert StallReason.WGMMA_WAIT.value == "WGMMA_WAIT"

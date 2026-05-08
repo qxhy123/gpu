@@ -18,6 +18,8 @@ class StallReason(Enum):
     PRED_OFF = "PRED_OFF"
     DIVERGENCE_SERIAL = "DIVERGENCE_SERIAL"
     MSHR_FULL = "MSHR_FULL"
+    WGMMA_QUEUE_FULL = "WGMMA_QUEUE_FULL"   # NEW
+    WGMMA_WAIT = "WGMMA_WAIT"               # NEW
 
 
 @dataclass
@@ -35,3 +37,10 @@ class Warp:
     last_operand_extra: int = 0
     executor: object | None = None  # per-warp executor override (for multi-CTA)
     _mshr_full_stall: bool = False
+    wgmma_pending_pc: int = -1                              # NEW
+    _wgmma_queue_full_stall: bool = False                   # NEW
+    _wgmma_wait_stall: bool = False                         # NEW
+
+    @property
+    def warp_group_id(self) -> int:
+        return self.warp_id // 4

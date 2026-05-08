@@ -139,9 +139,10 @@ class SM:
                 by_wg.setdefault(w.warp_group_id, []).append(w)
             for wg_id, ws in by_wg.items():
                 non_done = [w for w in ws if not w.finished]
-                if not non_done or len(non_done) < 4:
+                if not non_done or len(non_done) != 4:
                     continue
-                if all(w.wgmma_pending_pc >= 0 for w in non_done):
+                if (all(w.wgmma_pending_pc >= 0 for w in non_done)
+                        and len({w.wgmma_pending_pc for w in non_done}) == 1):
                     # All 4 warps arrived at the same wgmma. Issue.
                     pc = non_done[0].wgmma_pending_pc
                     instr = non_done[0].kernel.instrs[pc]

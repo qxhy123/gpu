@@ -362,6 +362,8 @@ addr 64-bit 布局（低位到高位）：
 
 **Trade-off 与 row-miss 的非直觉性**：在这种 layout 下，**stride = row_size (4 KB) 不会触发 row miss**——4 KB 增量只会让 col-in-row 跳跃，仍在同 row 内。要让每次访问都 row miss，stride 必须跳过 (channel × col × bank) = 8 × 32 × 16 × 128 B = **512 KB**。`row_buffer_demo` README 必须把这点讲清。
 
+> **Phase 2 实施期补充**（2026-05-08）：实测中，stride=512 KB（= 131072 floats）会让所有 32 个 lane 映射到 L1 cache set 0（因为 line_addr=512KB/128B=4096，`4096 & 0xFF = 0`），引发 L1 4-way thrashing + channel 完整序列化，模拟器进入 1e7 cycle runaway。`row_buffer_demo` 实际使用 `STRIDE=65568`（16384×4 + 32 elements，避开 L1 set 冲突，仍跳过足够的 col×bank 触发 row miss）和 `STRIDE=32`（row hit 基线）。详见 `examples/row_buffer_demo/README.md` 与 `docs/tutorial/11-row-buffer.md`。同样地，§7.4 微基准断言中的 "stride=512 KB" 改为 "stride=65568 floats"。
+
 ### 5.3 状态变量
 
 ```python
@@ -567,7 +569,7 @@ L1/L2/HBM 事件作为 instant events 加进 Perfetto trace（每条 event 一�
 - 数据集 > L1 fit L2 → l1_hit_rate < 0.5 AND l2_hit_rate ≥ 0.95
 - 单 channel saturation → 后续 queue_wait 显著 > 0
 - sequential addr → row_buffer_hit_rate ≥ 0.95
-- stride = 512 KB → row_buffer_hit_rate ≤ 0.1（layout 决定的 row-miss 触发 stride，见 §5.2）
+- stride = 65568 floats → row_buffer_hit_rate ≤ 0.1（layout-induced row-miss stride 实际取值；§5.2 末尾有 caveat 说明）
 ```
 
 Phase 1 微基准 `test_one_warp_kernel_ipc_le_1` 等如果断言精确 cycle 数 → 改为"≥"或区间。
@@ -642,7 +644,7 @@ Phase 1 配置文件加这两节后即可在 Phase 2 下跑；不加时使用默
 | 1 | **l1_thrash_demo** | L1 容量与 working set | 三种数据规模配置，逐步突破 L1/L2/HBM；hit-rate 直方图阶跃可见 |
 | 2 | **smem_vs_l1_demo** | 手动 caching vs 自动 caching | 同一 64×64 matmul 两个变体；smem 版 HBM 流量低，L1 版 HBM 流量随 thrash 上升 |
 | 3 | **bw_saturation_demo** | Channel 并行 vs 序列化 | 低/高并发 launch 对比；高并发下 channel utilization 接近 1.0，queue_wait 上升 |
-| 4 | **row_buffer_demo** | DRAM row locality | sequential (stride=128 B) vs row-miss stride (= **512 KB**，原因见 §5.2 layout)；row_buffer_hit_rate ≈1.0 vs ≈0 |
+| 4 | **row_buffer_demo** | DRAM row locality | row-hit (stride=32 floats) vs row-miss (stride=65568 floats，§5.2 末尾 caveat 解释为何不能用直觉的 512KB)；row_buffer_hit_rate ≈0.73 vs ≈0 |
 
 ### 9.2 4 个新讲义章节
 

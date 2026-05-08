@@ -60,3 +60,38 @@ def test_warp_state_does_not_merge_different_pcs():
     segs = list(r.warp_state_segments(warp_id=0))
     assert len(segs) == 3
     assert [s.pc for s in segs] == [0, 1, 2]
+
+
+def test_l1_event_recorded():
+    from gpusim.trace.recorder import Recorder
+    r = Recorder()
+    r.l1_access(cycle=10, warp_id=0, kind="HIT",
+                line_addr=0x100, set_idx=0, way=0, mshr_slot=None)
+    r.l1_access(cycle=20, warp_id=1, kind="MISS_NEW",
+                line_addr=0x200, set_idx=1, way=2, mshr_slot=3)
+    evs = list(r.l1_accesses())
+    assert len(evs) == 2
+    assert evs[0].kind == "HIT"
+    assert evs[1].mshr_slot == 3
+
+
+def test_l2_event_recorded():
+    from gpusim.trace.recorder import Recorder
+    r = Recorder()
+    r.l2_access(cycle=15, kind="HIT", line_addr=0x100, set_idx=0, way=0)
+    r.l2_access(cycle=25, kind="EVICT_DIRTY", line_addr=0x200, set_idx=1, way=1,
+                victim_addr=0x500)
+    evs = list(r.l2_accesses())
+    assert len(evs) == 2
+    assert evs[1].victim_addr == 0x500
+
+
+def test_hbm_event_recorded():
+    from gpusim.trace.recorder import Recorder
+    r = Recorder()
+    r.hbm_access(cycle=30, served_at=160, addr=0x100, channel=2, bank=5, row=42,
+                 kind="READ", row_kind="ROW_MISS", queue_wait=5)
+    evs = list(r.hbm_accesses())
+    assert len(evs) == 1
+    assert evs[0].channel == 2
+    assert evs[0].queue_wait == 5

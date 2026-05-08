@@ -1,10 +1,10 @@
 from __future__ import annotations
 from collections import defaultdict
-from types import SimpleNamespace
 from typing import Iterator
 from .events import (
     WarpStateSegment, InstrIssueEvent, SmemEvent, GmemEvent,
     DivEvent, CtaEvent, BarEvent,
+    L1Event, L2Event, HBMEvent,
 )
 
 
@@ -20,6 +20,9 @@ class Recorder:
         self._div: list[DivEvent] = []
         self._cta: list[CtaEvent] = []
         self._bar: list[BarEvent] = []
+        self._l1: list[L1Event] = []
+        self._l2: list[L2Event] = []
+        self._hbm: list[HBMEvent] = []
 
     def warp_state(self, *, cycle: int, warp_id: int, state: str, pc: int) -> None:
         cur = self._cur_state.get(warp_id)
@@ -101,20 +104,28 @@ class Recorder:
     def bar_events(self) -> list[BarEvent]:
         return list(self._bar)
 
-    # ------------------------------------------------------------------
-    # HBM access scaffold (T12).  T14 will replace with real HBMEvent.
-    # ------------------------------------------------------------------
+    def l1_access(self, *, cycle, warp_id, kind, line_addr, set_idx, way,
+                  mshr_slot=None) -> None:
+        self._l1.append(L1Event(kind=kind, cycle=cycle, warp_id=warp_id,
+                                line_addr=line_addr, set_idx=set_idx,
+                                way=way, mshr_slot=mshr_slot))
+
+    def l1_accesses(self) -> list[L1Event]:
+        return list(self._l1)
+
+    def l2_access(self, *, cycle, kind, line_addr, set_idx, way,
+                  victim_addr=-1) -> None:
+        self._l2.append(L2Event(kind=kind, cycle=cycle, line_addr=line_addr,
+                                set_idx=set_idx, way=way, victim_addr=victim_addr))
+
+    def l2_accesses(self) -> list[L2Event]:
+        return list(self._l2)
+
     def hbm_access(self, *, cycle, served_at, addr, channel, bank, row,
                    kind, row_kind, queue_wait) -> None:
-        if not hasattr(self, '_hbm'):
-            self._hbm = []
-        self._hbm.append(SimpleNamespace(
-            cycle=cycle, served_at=served_at, addr=addr,
-            channel=channel, bank=bank, row=row,
-            kind=kind, row_kind=row_kind, queue_wait=queue_wait,
-        ))
+        self._hbm.append(HBMEvent(kind=kind, row_kind=row_kind, cycle=cycle,
+                                  served_at=served_at, addr=addr, channel=channel,
+                                  bank=bank, row=row, queue_wait=queue_wait))
 
-    def hbm_accesses(self):
-        if not hasattr(self, '_hbm'):
-            return []
+    def hbm_accesses(self) -> list[HBMEvent]:
         return list(self._hbm)

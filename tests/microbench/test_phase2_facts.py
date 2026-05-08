@@ -14,10 +14,10 @@ _ROW_BUFFER_PTX = (
 
 
 def test_data_fits_l1_high_l1_hit_rate():
-    """Working set fitting in L1 with reuse → L1 hit rate >= 0.5 after warmup.
+    """Working set fitting in L1 + outer-loop reuse → L1 hit rate >= 0.6 after warmup.
 
-    Use STRIDE=1 so all 32 threads access a 1-element stride window; the same
-    cache lines are accessed on every iteration, giving high L1 hit rate.
+    OUTER_LOOPS=4 revisits the K-line set; first pass is cold-miss, subsequent
+    passes hit L1 since 256 lines × 128 B = 32 KB << L1 = 128 KB.
     """
     n = 16 << 20
     a = np.arange(n, dtype=np.float32)
@@ -26,11 +26,11 @@ def test_data_fits_l1_high_l1_hit_rate():
         ptx_src=_L1_THRASH_PTX,
         grid=(1, 1, 1),
         block=(32, 1, 1),
-        params={"A": a, "OUT": out, "K": 32, "STRIDE": 1},
+        params={"A": a, "OUT": out, "K": 256, "STRIDE": 32, "OUTER_LOOPS": 4},
         mode="timing",
     )
-    assert res.cache_metrics["l1_hit_rate"] >= 0.5, (
-        f"Expected l1_hit_rate >= 0.5 for STRIDE=1 (reusing same lines), "
+    assert res.cache_metrics["l1_hit_rate"] >= 0.6, (
+        f"Expected l1_hit_rate >= 0.6 with outer-loop reuse, "
         f"got {res.cache_metrics['l1_hit_rate']:.4f}"
     )
 

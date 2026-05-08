@@ -247,6 +247,13 @@ class SubCore:
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask,
                 )
+                flops = 2 * spec.m * spec.n * spec.k
+                self.recorder.mma(
+                    cycle=now, warp_id=w.warp_id, pc=instr.pc,
+                    precision=spec.dtype_a.value, shape_m=spec.m, shape_n=spec.n,
+                    shape_k=spec.k, accum_dtype=spec.dtype_d.value,
+                    flops_count=flops,
+                )
             latency = self.tc_cfg.tc_mma_latency
             if isinstance(dst, RegGroup):
                 for r in dst.regs:
@@ -263,14 +270,21 @@ class SubCore:
             w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return
         if op == "wgmma.commit_group.sync.aligned":
+            gid = -1
             if self.wgmma_queues is not None:
                 q = self.wgmma_queues.setdefault(w.warp_group_id, _make_queue(self.cfg))
                 q.commit_group()
+                gid = q.current_group_id if hasattr(q, "current_group_id") else -1
             if self.recorder is not None:
                 self.recorder.instr_issue(
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                )
+                self.recorder.wgmma(
+                    kind="COMMIT_GROUP", cycle=now,
+                    warp_group_id=w.warp_group_id, pc=instr.pc,
+                    commit_group_id=gid,
                 )
             w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return
@@ -281,6 +295,11 @@ class SubCore:
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                )
+                self.recorder.wgmma(
+                    kind="WAIT_GROUP", cycle=now,
+                    warp_group_id=w.warp_group_id, pc=instr.pc,
+                    wait_n=int(instr.src[0].value),
                 )
             w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return
@@ -345,6 +364,13 @@ class SubCore:
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
                 )
+                self.recorder.tma(
+                    cycle=now, completion_at=completion_at,
+                    smem_dst=smem_dst, gmem_base=desc.gmem_base,
+                    dim_x=desc.dim_x, dim_y=desc.dim_y,
+                    bytes_total=tx_bytes, n_cache_lines=n_lines,
+                    mbarrier_addr=mbar_addr,
+                )
             w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return
 
@@ -360,6 +386,10 @@ class SubCore:
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
                 )
+                self.recorder.mbarrier(
+                    kind="INIT", cycle=now, cta_id=w.cta_id,
+                    smem_addr=mbar_addr, expected=count,
+                )
             w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return
 
@@ -373,6 +403,12 @@ class SubCore:
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                )
+                bar = pool._barriers.get(mbar_addr) if pool else None
+                self.recorder.mbarrier(
+                    kind="ARRIVE", cycle=now, cta_id=w.cta_id,
+                    smem_addr=mbar_addr,
+                    arrived=bar.arrived_count if bar is not None else 0,
                 )
             w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return
@@ -391,6 +427,13 @@ class SubCore:
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                )
+                bar = pool._barriers.get(mbar_addr) if pool else None
+                self.recorder.mbarrier(
+                    kind="TRY_WAIT", cycle=now, cta_id=w.cta_id,
+                    smem_addr=mbar_addr,
+                    phase=bar.phase if bar is not None else 0,
+                    pred_result=bool(result),
                 )
             w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return

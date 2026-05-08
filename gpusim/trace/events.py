@@ -111,3 +111,57 @@ class HBMEvent:
     bank: int
     row: int
     queue_wait: int
+
+
+@dataclass(frozen=True)
+class MmaEvent:
+    cycle: int
+    warp_id: int
+    pc: int
+    precision: str
+    shape_m: int
+    shape_n: int
+    shape_k: int
+    accum_dtype: str
+    flops_count: int
+
+
+@dataclass(frozen=True)
+class WgmmaEvent:
+    kind: str            # "ISSUE" | "COMMIT_GROUP" | "WAIT_GROUP" | "DRAIN"
+    cycle: int
+    warp_group_id: int
+    pc: int
+    precision: str = ""
+    shape_m: int = 0
+    shape_n: int = 0
+    shape_k: int = 0
+    accum_dtype: str = ""
+    commit_group_id: int = -1
+    wait_n: int = -1
+    completion_at: int = -1
+
+
+@dataclass(frozen=True)
+class TmaEvent:
+    cycle: int
+    completion_at: int
+    smem_dst: int
+    gmem_base: int
+    dim_x: int
+    dim_y: int
+    bytes_total: int
+    n_cache_lines: int
+    mbarrier_addr: int
+
+
+@dataclass(frozen=True)
+class MbarrierEvent:
+    kind: str            # "INIT" | "ARRIVE" | "ARRIVE_TX" | "FLIP" | "TRY_WAIT"
+    cycle: int
+    cta_id: int
+    smem_addr: int
+    expected: int = 0
+    arrived: int = 0
+    phase: int = 0
+    pred_result: bool = False

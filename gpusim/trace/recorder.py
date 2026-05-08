@@ -5,6 +5,7 @@ from .events import (
     WarpStateSegment, InstrIssueEvent, SmemEvent, GmemEvent,
     DivEvent, CtaEvent, BarEvent,
     L1Event, L2Event, HBMEvent,
+    MmaEvent, WgmmaEvent, TmaEvent, MbarrierEvent,
 )
 
 
@@ -23,6 +24,10 @@ class Recorder:
         self._l1: list[L1Event] = []
         self._l2: list[L2Event] = []
         self._hbm: list[HBMEvent] = []
+        self.mma_events: list[MmaEvent] = []
+        self.wgmma_events: list[WgmmaEvent] = []
+        self.tma_events: list[TmaEvent] = []
+        self.mbarrier_events: list[MbarrierEvent] = []
 
     def warp_state(self, *, cycle: int, warp_id: int, state: str, pc: int) -> None:
         cur = self._cur_state.get(warp_id)
@@ -129,3 +134,42 @@ class Recorder:
 
     def hbm_accesses(self) -> list[HBMEvent]:
         return list(self._hbm)
+
+    def mma(self, *, cycle: int, warp_id: int, pc: int, precision: str,
+            shape_m: int, shape_n: int, shape_k: int, accum_dtype: str,
+            flops_count: int) -> None:
+        self.mma_events.append(MmaEvent(
+            cycle=cycle, warp_id=warp_id, pc=pc, precision=precision,
+            shape_m=shape_m, shape_n=shape_n, shape_k=shape_k,
+            accum_dtype=accum_dtype, flops_count=flops_count,
+        ))
+
+    def wgmma(self, *, kind: str, cycle: int, warp_group_id: int, pc: int,
+              precision: str = "", shape_m: int = 0, shape_n: int = 0,
+              shape_k: int = 0, accum_dtype: str = "",
+              commit_group_id: int = -1, wait_n: int = -1,
+              completion_at: int = -1) -> None:
+        self.wgmma_events.append(WgmmaEvent(
+            kind=kind, cycle=cycle, warp_group_id=warp_group_id, pc=pc,
+            precision=precision, shape_m=shape_m, shape_n=shape_n, shape_k=shape_k,
+            accum_dtype=accum_dtype, commit_group_id=commit_group_id,
+            wait_n=wait_n, completion_at=completion_at,
+        ))
+
+    def tma(self, *, cycle: int, completion_at: int, smem_dst: int,
+            gmem_base: int, dim_x: int, dim_y: int, bytes_total: int,
+            n_cache_lines: int, mbarrier_addr: int) -> None:
+        self.tma_events.append(TmaEvent(
+            cycle=cycle, completion_at=completion_at, smem_dst=smem_dst,
+            gmem_base=gmem_base, dim_x=dim_x, dim_y=dim_y,
+            bytes_total=bytes_total, n_cache_lines=n_cache_lines,
+            mbarrier_addr=mbarrier_addr,
+        ))
+
+    def mbarrier(self, *, kind: str, cycle: int, cta_id: int, smem_addr: int,
+                 expected: int = 0, arrived: int = 0, phase: int = 0,
+                 pred_result: bool = False) -> None:
+        self.mbarrier_events.append(MbarrierEvent(
+            kind=kind, cycle=cycle, cta_id=cta_id, smem_addr=smem_addr,
+            expected=expected, arrived=arrived, phase=phase, pred_result=pred_result,
+        ))

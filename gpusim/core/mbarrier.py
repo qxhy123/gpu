@@ -36,9 +36,11 @@ class MbarrierPool:
         bar = self._barriers[smem_addr]
         bar.pending_tx.append((tx_bytes, completion_at))
 
-    def tick(self, now: int) -> None:
-        """Drain pending_tx whose completion_at <= now. Each drain = 1 arrive."""
-        for bar in self._barriers.values():
+    def tick(self, now: int) -> list[tuple[int, int]]:
+        """Drain pending_tx whose completion_at <= now. Each drain = 1 arrive.
+        Returns list of (smem_addr, new_phase) for barriers that flipped."""
+        flipped: list[tuple[int, int]] = []
+        for addr, bar in self._barriers.items():
             new_pending: list[tuple[int, int]] = []
             for tx_bytes, comp in bar.pending_tx:
                 if comp <= now:
@@ -46,9 +48,11 @@ class MbarrierPool:
                     if bar.arrived_count >= bar.expected_count:
                         bar.arrived_count = 0
                         bar.phase ^= 1
+                        flipped.append((addr, bar.phase))
                 else:
                     new_pending.append((tx_bytes, comp))
             bar.pending_tx = new_pending
+        return flipped
 
     def try_wait(self, smem_addr: int, expected_phase: int) -> bool:
         """True iff barrier has flipped past expected_phase (bar.phase != expected_phase)."""

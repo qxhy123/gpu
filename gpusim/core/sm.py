@@ -128,8 +128,16 @@ class SM:
                 sc.step(now=cycle)
             l1.install_completed_lines(now=cycle)
 
-            for pool in mbarrier_pools.values():
-                pool.tick(now=cycle)
+            for cta_id, pool in mbarrier_pools.items():
+                flipped = pool.tick(now=cycle)
+                if self.recorder is not None:
+                    for addr, new_phase in flipped:
+                        self.recorder.mbarrier(
+                            kind="FLIP", cycle=cycle, cta_id=cta_id,
+                            smem_addr=addr,
+                            expected=pool._barriers[addr].expected_count,
+                            arrived=0, phase=new_phase,
+                        )
 
             by_cta: dict[int, list[Warp]] = {}
             for w in active_warps:
@@ -202,6 +210,14 @@ class SM:
                                 pc=pc, op=instr.op,
                                 src_loc=(instr.src_loc.file, instr.src_loc.line),
                                 active_mask=non_done[0].fn_state.active_mask,
+                            )
+                            self.recorder.wgmma(
+                                kind="ISSUE", cycle=cycle,
+                                warp_group_id=wg_id, pc=pc,
+                                precision=spec.dtype_a.value,
+                                shape_m=spec.m, shape_n=spec.n, shape_k=spec.k,
+                                accum_dtype=spec.dtype_d.value,
+                                completion_at=f.completion_at,
                             )
 
             # Drain wgmma queues each cycle

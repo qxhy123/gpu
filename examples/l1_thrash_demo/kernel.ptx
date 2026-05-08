@@ -1,0 +1,33 @@
+// examples/l1_thrash_demo/kernel.ptx
+// Each thread reads K elements with STRIDE between them. By varying K and
+// STRIDE we sweep through cache hierarchies.
+.visible .entry l1_thrash(.param .u64 A, .param .u64 OUT,
+                          .param .u32 K, .param .u32 STRIDE)
+{
+    .reg .u32 %r<8>; .reg .u64 %rd<5>; .reg .f32 %f<2>; .reg .pred %p<2>;
+    ld.param.u64 %rd1, [A];
+    ld.param.u64 %rd2, [OUT];
+    ld.param.u32 %r1, [K];
+    ld.param.u32 %r2, [STRIDE];
+
+    mov.u32 %r3, %tid.x;       // tid
+    mov.u32 %r4, 0;             // iter = 0
+LOOP:
+    setp.ge.s32 %p1, %r4, %r1;
+    @%p1 bra DONE;
+    // index = tid + iter * STRIDE
+    mul.lo.s32 %r5, %r4, %r2;
+    add.s32 %r6, %r3, %r5;
+    shl.b32 %r7, %r6, 2;
+    cvt.u64.u32 %rd3, %r7;
+    add.u64 %rd4, %rd1, %rd3;
+    ld.global.f32 %f1, [%rd4];
+    add.s32 %r4, %r4, 1;
+    bra LOOP;
+DONE:
+    // store last value to out[tid]
+    shl.b32 %r7, %r3, 2;
+    cvt.u64.u32 %rd3, %r7;
+    add.u64 %rd2, %rd2, %rd3;
+    st.global.f32 [%rd2], %f1;
+}

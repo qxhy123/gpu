@@ -74,6 +74,26 @@
 {{ mbarrier_table_html | safe }}
 {% endif %}
 
+{% if per_sm_utilization_html %}
+<h2>§15 Per-SM utilization</h2>
+{{ per_sm_utilization_html | safe }}
+{% endif %}
+
+{% if cta_dispatch_html %}
+<h2>§16 CTA → SM dispatch</h2>
+{{ cta_dispatch_html | safe }}
+{% endif %}
+
+{% if l2_mshr_pressure_html %}
+<h2>§17 L2 MSHR events</h2>
+{{ l2_mshr_pressure_html | safe }}
+{% endif %}
+
+{% if bulk_store_table_html %}
+<h2>§18 BulkStore timeline</h2>
+{{ bulk_store_table_html | safe }}
+{% endif %}
+
 <script>
 Plotly.newPlot("stall_pie", {{ stall_pie_json|safe }}, {});
 Plotly.newPlot("ipc_line", {{ ipc_line_json|safe }}, {});

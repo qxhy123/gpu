@@ -105,6 +105,42 @@ def build_perfetto(rec: Recorder) -> dict:
                 "args": {"phase": ev.phase},
             })
 
+    # Phase 4: per-SM CTA dispatch instants
+    for ev in rec.cta_dispatch_events:
+        events.append({
+            "name": f"CTA {ev.cta_id}",
+            "cat": "cta", "ph": "i", "ts": ev.cycle,
+            "pid": f"SM{ev.sm_id}", "tid": "cta_dispatch",
+        })
+
+    # L2 MSHR events
+    for ev in rec.l2_mshr_events:
+        events.append({
+            "name": f"L2 {ev.kind}",
+            "cat": "l2_mshr", "ph": "i", "ts": ev.cycle,
+            "pid": "L2_MSHR", "tid": ev.kind.lower(),
+            "args": {"line_addr": ev.line_addr, "sm_id": ev.sm_id,
+                     "n_waiters": ev.n_waiters},
+        })
+
+    # BulkStore in-flight as duration events per warp-group
+    for ev in rec.bulk_store_events:
+        if ev.kind == "ISSUE":
+            events.append({
+                "name": "bulk_store",
+                "cat": "tma_store", "ph": "X", "ts": ev.cycle,
+                "dur": max(1, ev.completion_at - ev.cycle),
+                "pid": f"TMA_Store_wg{ev.warp_group_id}", "tid": "bulk",
+                "args": {"bytes": ev.bytes_total, "sm_id": ev.sm_id},
+            })
+        elif ev.kind == "WAIT_GROUP":
+            events.append({
+                "name": "wait_group",
+                "cat": "tma_store", "ph": "i", "ts": ev.cycle,
+                "pid": f"TMA_Store_wg{ev.warp_group_id}", "tid": "wait",
+                "args": {"sm_id": ev.sm_id, "wait_n": ev.wait_n},
+            })
+
     return {"traceEvents": events, "displayTimeUnit": "ns"}
 
 

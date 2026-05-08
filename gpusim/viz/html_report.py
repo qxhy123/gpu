@@ -65,6 +65,46 @@ def _render_mbarrier_table(rec: Recorder) -> str:
     return df.to_html(index=False)
 
 
+def _render_per_sm_utilization(rec, cycles):
+    if not rec.cta_dispatch_events:
+        return ""
+    sm_ids = sorted({e.sm_id for e in rec.cta_dispatch_events})
+    if not sm_ids:
+        return ""
+    n_sm = max(sm_ids) + 1
+    warp_segments = list(rec.all_warp_segments())
+    if not warp_segments:
+        return pd.DataFrame({"sm_id": list(range(n_sm)),
+                              "util": [0.0] * n_sm}).to_html(index=False)
+    warp_state_df = pd.DataFrame([{"warp_id": s.warp_id, "start": s.start,
+                                    "end": s.end, "state": s.state, "pc": s.pc}
+                                   for s in warp_segments])
+    from gpusim.analysis.metrics import per_sm_utilization
+    df = per_sm_utilization(warp_state_df, cycles, n_sm)
+    return df.to_html(index=False)
+
+
+def _render_cta_dispatch(rec):
+    if not rec.cta_dispatch_events:
+        return ""
+    df = pd.DataFrame([asdict(e) for e in rec.cta_dispatch_events])
+    return df.to_html(index=False)
+
+
+def _render_l2_mshr_pressure(rec, cycles):
+    if not rec.l2_mshr_events:
+        return ""
+    df = pd.DataFrame([asdict(e) for e in rec.l2_mshr_events])
+    return df.to_html(index=False)
+
+
+def _render_bulk_store_table(rec):
+    if not rec.bulk_store_events:
+        return ""
+    df = pd.DataFrame([asdict(e) for e in rec.bulk_store_events])
+    return df.to_html(index=False)
+
+
 def _ws_df(rec: Recorder) -> pd.DataFrame:
     segs = list(rec.all_warp_segments())
     return pd.DataFrame([{"warp_id":s.warp_id,"start":s.start,"end":s.end,
@@ -162,6 +202,10 @@ def build_html(rec: Recorder, *, kernel_name: str, grid, block,
         precision_distribution_html=_render_precision_distribution(rec),
         wgmma_timeline_html=_render_wgmma_timeline(rec),
         mbarrier_table_html=_render_mbarrier_table(rec),
+        per_sm_utilization_html=_render_per_sm_utilization(rec, cycles),
+        cta_dispatch_html=_render_cta_dispatch(rec),
+        l2_mshr_pressure_html=_render_l2_mshr_pressure(rec, cycles),
+        bulk_store_table_html=_render_bulk_store_table(rec),
     )
 
 

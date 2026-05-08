@@ -119,9 +119,15 @@ class Recorder:
         return list(self._l1)
 
     def l2_access(self, *, cycle, kind, line_addr, set_idx, way,
-                  victim_addr=-1) -> None:
+                  victim_addr: int = -1, origin_sm: int = -1,
+                  hit_sm: int = -1) -> None:
+        # origin_sm / hit_sm absorbed here; T27 will persist them in L2Event
         self._l2.append(L2Event(kind=kind, cycle=cycle, line_addr=line_addr,
                                 set_idx=set_idx, way=way, victim_addr=victim_addr))
+
+    def l2_mshr(self, *, kind, cycle, line_addr, sm_id, n_waiters: int = 0):
+        # T27 will add storage. For now, no-op.
+        pass
 
     def l2_accesses(self) -> list[L2Event]:
         return list(self._l2)

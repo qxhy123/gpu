@@ -8,6 +8,7 @@ class CacheLine:
     valid: bool = False
     dirty: bool = False
     lru_pos: int = 0      # 0 = MRU; ways-1 = LRU
+    origin_sm: int = -1
 
 
 @dataclass
@@ -44,7 +45,8 @@ class CacheSet:
             elif line.valid and line.lru_pos < old_pos:
                 line.lru_pos += 1
 
-    def install(self, *, tag: int, dirty: bool) -> CacheLine | None:
+    def install(self, *, tag: int, dirty: bool,
+                origin_sm: int = -1) -> CacheLine | None:
         """Install a new line with this tag. Returns the evicted line (or None
         if a free way was used)."""
         # try invalid way first
@@ -55,6 +57,7 @@ class CacheSet:
                 line.tag = tag
                 line.valid = True
                 line.dirty = dirty
+                line.origin_sm = origin_sm
                 line.lru_pos = 0
                 # bump older lines down (those that were below old_pos)
                 for other in self._lines:
@@ -72,6 +75,7 @@ class CacheSet:
         # replace in-place
         victim.tag = tag
         victim.dirty = dirty
+        victim.origin_sm = origin_sm
         victim.lru_pos = 0
         # bump others
         for other in self._lines:

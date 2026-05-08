@@ -26,7 +26,7 @@ class GTOScheduler:
         self._current: int | None = None
 
     def pick(self, now: int, candidates: Callable[[int], bool]) -> int | None:
-        if self._current is not None and candidates(self._current):
+        if self._current is not None and self._current < self.n and candidates(self._current):
             return self._current
         for i in range(self.n):
             if candidates(i):

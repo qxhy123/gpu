@@ -36,6 +36,7 @@ class SubCore:
     executor: InstrExecutor
     warps: list[Warp]
     recorder: object | None = None
+    l1: object | None = None  # L1Cache, optional for backward compat with Phase 1 tests
 
     def __post_init__(self):
         self.fus = FUSet(self.cfg.fu)
@@ -73,6 +74,16 @@ class SubCore:
             return False, StallReason.STRUCTURAL
         return True, StallReason.ISSUED
 
+    def _emit_warp_states(self, states: list[StallReason], now: int) -> None:
+        if self.recorder is None:
+            return
+        for i, w in enumerate(self.warps):
+            self.recorder.warp_state(
+                cycle=now, warp_id=w.warp_id,
+                state=states[i].value,
+                pc=(w.stack.top().pc if w.stack and not w.stack.is_done() else -1),
+            )
+
     def step(self, now: int) -> list[StallReason]:
         self.scheduler.n = len(self.warps)
         states: list[StallReason] = [StallReason.IDLE] * len(self.warps)
@@ -84,27 +95,22 @@ class SubCore:
         # initial: all warps reflect their own readiness
         for i in range(len(self.warps)):
             states[i] = ready_flags[i]
+
+        if chosen is None:
+            self._emit_warp_states(states, now)
+            return states
+
         # scheduler-decision adjustment: only ONE warp per sub-core actually issues.
         # Other "ready" warps lost the issue slot this cycle → STRUCTURAL.
-        if chosen is not None:
-            for i in range(len(self.warps)):
-                if i != chosen and ready_flags[i] is StallReason.ISSUED:
-                    states[i] = StallReason.STRUCTURAL
+        for i in range(len(self.warps)):
+            if i != chosen and ready_flags[i] is StallReason.ISSUED:
+                states[i] = StallReason.STRUCTURAL
         # If the chosen warp is issuing under a partial mask (inside a divergent region),
         # record DIVERGENCE_SERIAL instead of ISSUED so the trace makes the cost visible.
-        if chosen is not None:
-            cw = self.warps[chosen]
-            if cw.stack is not None and cw.stack.is_divergent():
-                states[chosen] = StallReason.DIVERGENCE_SERIAL
-        if self.recorder is not None:
-            for i, w in enumerate(self.warps):
-                self.recorder.warp_state(
-                    cycle=now, warp_id=w.warp_id,
-                    state=states[i].value,
-                    pc=(w.stack.top().pc if w.stack and not w.stack.is_done() else -1),
-                )
-        if chosen is None:
-            return states
+        cw = self.warps[chosen]
+        if cw.stack is not None and cw.stack.is_divergent():
+            states[chosen] = StallReason.DIVERGENCE_SERIAL
+
         w = self.warps[chosen]
         instr = w.kernel.instrs[w.stack.top().pc]
         op = instr.op
@@ -132,8 +138,15 @@ class SubCore:
                                        gmem_transactions=gmem_n_tx)
         self.fus.reserve(kind, now, occ)
         self._issue(w, instr, now, smem_conflict=smem_conflict, gmem_n_tx=gmem_n_tx)
-        # states[chosen] was already set to ISSUED or DIVERGENCE_SERIAL before recording;
-        # leave it as-is so the return value is consistent with what was recorded.
+
+        # After _issue: check if L1 rejected the access (MSHR full)
+        if w._mshr_full_stall:
+            w._mshr_full_stall = False
+            states[chosen] = StallReason.MSHR_FULL
+            self._emit_warp_states(states, now)
+            return states
+
+        self._emit_warp_states(states, now)
         return states
 
     def _issue(self, w: Warp, instr: Instr, now: int,
@@ -202,10 +215,30 @@ class SubCore:
             addrs = global_addresses_for_warp(w.fn_state, instr)
             info = coalescing_info(addrs, active_mask=w.fn_state.active_mask)
             w.last_gmem = info
-            # Each additional transaction adds one extra cycle to the result latency
-            # (the last transaction completes one cycle after the previous ones)
-            if op.startswith("ld.global."):
-                latency += gmem_n_tx - 1
+
+            # Phase 2: route ld.global through L1 cache (if available)
+            if self.l1 is not None and op.startswith("ld.global."):
+                from gpusim.core.cache.l1 import Reject
+                line_size = self.cfg.cache.l1_line_bytes
+                line_addrs = sorted({a // line_size for a in addrs if a >= 0})
+                max_ready = now
+                for la in line_addrs:
+                    res = self.l1.access(
+                        line_addr=la, warp_id=w.warp_id,
+                        dst_regs=tuple(_dst_regs(instr)),
+                        mode="load", now=now,
+                    )
+                    if isinstance(res, Reject):
+                        # MSHR pool full — rollback: don't mark scoreboard / advance PC
+                        w._mshr_full_stall = True
+                        return
+                    max_ready = max(max_ready, res.ready_at)
+                latency = max_ready - now
+            else:
+                # Phase 1 fixed-latency path (also used for st.global)
+                if op.startswith("ld.global."):
+                    latency += gmem_n_tx - 1
+
             if self.recorder is not None:
                 self.recorder.gmem_access(
                     cycle=now, warp_id=w.warp_id,

@@ -52,8 +52,16 @@ class SM:
         executor = InstrExecutor(kernel=kernel, gmem=gmem, smem=smem,
                                  params=paramspace, cta_id=0,
                                  ctaid=(0,0,0), nctaid=grid, ntid=block)
+
+        from gpusim.core.cache.l1 import L1Cache
+        from gpusim.core.cache.l2 import L2Cache
+        from gpusim.core.hbm import HBM
+        hbm = HBM(self.cfg.hbm)
+        l2 = L2Cache(self.cfg.cache, hbm)
+        l1 = L1Cache(self.cfg.cache, l2)
+
         sub_cores: list[SubCore] = [
-            SubCore(i, self.cfg, executor, [], recorder=self.recorder)
+            SubCore(i, self.cfg, executor, [], recorder=self.recorder, l1=l1)
             for i in range(self.cfg.sub_cores)
         ]
 
@@ -94,6 +102,7 @@ class SM:
         while True:
             for sc in sub_cores:
                 sc.step(now=cycle)
+            l1.install_completed_lines(now=cycle)
 
             by_cta: dict[int, list[Warp]] = {}
             for w in active_warps:

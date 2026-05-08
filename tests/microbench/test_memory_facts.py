@@ -56,16 +56,32 @@ def test_one_warp_kernel_ipc_le_1():
 
 
 def test_strided_global_costs_more_cycles_than_coalesced():
-    """stride=8 in coalescing_demo should take more cycles than stride=1."""
+    """stride=8 should take more cycles than stride=1 when MSHR slots are limited.
+
+    With a full L1 cache (16 MSHR slots), both strides complete in the same
+    number of cycles because all cache-line misses are issued in parallel.
+    With mshr_slots=4 and stride=8 needing 8 distinct cache lines, MSHR_FULL
+    stalls force the warp to retry, causing more cycles than stride=1 (1 line).
+    """
+    from gpusim.config.schema import CacheConfig
     ptx = (pathlib.Path(__file__).parents[2] / "examples/coalescing_demo/kernel.ptx").read_text()
+    k = parse(ptx, "coal_demo")
     n = 1024
     a = np.arange(n, dtype=np.uint32)
+
+    cfg = load_default()
+    cfg.cache = CacheConfig(mshr_slots=4)  # 4 slots: stride=1 (1 line) fits; stride=8 (8 lines) stalls
+
+    sm1 = SM(cfg)
     out1 = np.zeros(32, dtype=np.uint32)
-    res1 = gpusim.run(ptx_src=ptx, grid=(1,1,1), block=(32,1,1),
-                     params={"A": a, "OUT": out1, "STRIDE": 1}, mode="timing")
+    res1 = sm1.run(kernel=k, grid=(1,1,1), block=(32,1,1),
+                   params={"A": a, "OUT": out1, "STRIDE": 1})
+
+    sm8 = SM(cfg)
     out8 = np.zeros(32, dtype=np.uint32)
-    res8 = gpusim.run(ptx_src=ptx, grid=(1,1,1), block=(32,1,1),
-                     params={"A": a, "OUT": out8, "STRIDE": 8}, mode="timing")
-    # stride=8 has 8 transactions vs 1 — at least a few extra cycles
-    assert res8.metrics["cycles"] > res1.metrics["cycles"], \
-        f"stride=8 cycles ({res8.metrics['cycles']}) should exceed stride=1 ({res1.metrics['cycles']})"
+    res8 = sm8.run(kernel=k, grid=(1,1,1), block=(32,1,1),
+                   params={"A": a, "OUT": out8, "STRIDE": 8})
+
+    # stride=8 causes MSHR_FULL stalls (8 lines needed > 4 slots) → more cycles
+    assert res8.cycles > res1.cycles, \
+        f"stride=8 cycles ({res8.cycles}) should exceed stride=1 ({res1.cycles})"

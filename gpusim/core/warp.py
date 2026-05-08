@@ -34,3 +34,4 @@ class Warp:
     outstanding_loads: list[int] = field(default_factory=list)
     last_operand_extra: int = 0
     executor: object | None = None  # per-warp executor override (for multi-CTA)
+    _mshr_full_stall: bool = False

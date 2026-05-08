@@ -61,3 +61,101 @@ def test_only_one_warp_issues_per_subcore_per_cycle():
     structural_count = sum(1 for st in states if st is StallReason.STRUCTURAL)
     assert issued_count == 1, f"expected 1 ISSUED, got {issued_count}: {states}"
     assert structural_count == 2, f"expected 2 STRUCTURAL, got {structural_count}: {states}"
+
+
+def test_subcore_issues_global_load_through_l1():
+    """ld.global goes through L1 cache; first access misses, returns appropriate ready_at."""
+    from gpusim.core.cache.l1 import L1Cache
+    from gpusim.core.cache.l2 import L2Cache
+    from gpusim.core.hbm import HBM
+    import numpy as np
+
+    src = """
+    .visible .entry k(.param .u64 A) {
+        .reg .u32 %r<3>; .reg .u64 %rd<3>; .reg .f32 %f<2>;
+        ld.param.u64 %rd1, [A];
+        mov.u32 %r1, %tid.x;
+        shl.b32 %r2, %r1, 2;
+        cvt.u64.u32 %rd2, %r2;
+        add.u64 %rd1, %rd1, %rd2;
+        ld.global.f32 %f1, [%rd1];
+    }
+    """
+    k = parse(src, "<t>")
+    cfg = load_default()
+    arr = np.arange(32, dtype=np.float32)
+    g = GlobalMemory()
+    g.bind("A", arr)
+    s = SharedMemory()
+    s.allocate_cta(0, 4096)
+    p = ParamSpace({"A": g.address_of("A")})
+    ex = InstrExecutor(kernel=k, gmem=g, smem=s, params=p, cta_id=0,
+                       ctaid=(0,0,0), nctaid=(1,1,1), ntid=(32,1,1))
+    fn = WarpFnState(warp_size=32, tids=tuple(range(32)))
+    w = Warp(warp_id=0, kernel=k, fn_state=fn,
+             stack=SIMTStack(warp_size=32, entry_pc=0))
+
+    hbm = HBM(cfg.hbm)
+    l2 = L2Cache(cfg.cache, hbm)
+    l1 = L1Cache(cfg.cache, l2)
+
+    sc = SubCore(sub_core_id=0, cfg=cfg, executor=ex, warps=[w], l1=l1)
+    for cycle in range(2000):
+        sc.step(now=cycle)
+        l1.install_completed_lines(now=cycle)
+        if w.finished or (w.stack and w.stack.is_done()):
+            break
+    assert w.finished or w.stack.is_done()
+
+
+def test_subcore_emits_mshr_full_when_pool_saturated():
+    from gpusim.config.schema import CacheConfig
+    from gpusim.core.cache.l1 import L1Cache
+    from gpusim.core.cache.l2 import L2Cache
+    from gpusim.core.hbm import HBM
+    import numpy as np
+
+    cfg = load_default()
+    cfg.cache = CacheConfig(mshr_slots=1)  # tiny pool — fills after 1 miss
+    # Use stride-128 (shl by 7 = tid*128) so all 32 threads touch different
+    # 128-byte cache lines. The first ld.global allocates the 1 MSHR slot; the
+    # second distinct line in the same warp access causes Reject → MSHR_FULL.
+    # Two sequential ld.global instructions ensure the second one sees a full pool.
+    src = """
+    .visible .entry k(.param .u64 A) {
+        .reg .u32 %r<5>; .reg .u64 %rd<6>; .reg .f32 %f<5>;
+        ld.param.u64 %rd1, [A];
+        mov.u32 %r1, %tid.x;
+        shl.b32 %r2, %r1, 7;
+        cvt.u64.u32 %rd2, %r2;
+        add.u64 %rd3, %rd1, %rd2;
+        ld.global.f32 %f1, [%rd3];
+        ld.global.f32 %f2, [%rd3];
+        ld.global.f32 %f3, [%rd3];
+    }
+    """
+    k = parse(src, "<t>")
+    # stride=128 bytes per thread * 32 threads = 4096 bytes needed
+    arr = np.arange(1024, dtype=np.float32)
+    g = GlobalMemory(); g.bind("A", arr)
+    s = SharedMemory(); s.allocate_cta(0, 4096)
+    p = ParamSpace({"A": g.address_of("A")})
+    ex = InstrExecutor(kernel=k, gmem=g, smem=s, params=p, cta_id=0,
+                       ctaid=(0,0,0), nctaid=(1,1,1), ntid=(32,1,1))
+    fn = WarpFnState(warp_size=32, tids=tuple(range(32)))
+    w = Warp(warp_id=0, kernel=k, fn_state=fn,
+             stack=SIMTStack(warp_size=32, entry_pc=0))
+    hbm = HBM(cfg.hbm)
+    l2 = L2Cache(cfg.cache, hbm)
+    l1 = L1Cache(cfg.cache, l2)
+
+    sc = SubCore(sub_core_id=0, cfg=cfg, executor=ex, warps=[w], l1=l1)
+    saw_mshr_full = False
+    for cycle in range(2000):
+        states = sc.step(now=cycle)
+        l1.install_completed_lines(now=cycle)
+        if states[0] is StallReason.MSHR_FULL:
+            saw_mshr_full = True
+        if w.finished or (w.stack and w.stack.is_done()):
+            break
+    assert saw_mshr_full, "expected at least one MSHR_FULL stall"

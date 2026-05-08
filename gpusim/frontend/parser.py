@@ -232,6 +232,22 @@ class _Parser:
             return t.value  # plain str — caller treats as label/param
         raise ParseError(f"{t.file}:{t.line}:{t.col}: unexpected operand token {t.kind} {t.value!r}")
 
+    def _parse_brace_list(self, ty: PtxType = PtxType.b32) -> "RegGroup":
+        from .ir import RegGroup
+        self.eat("LBRACE")
+        regs: list[Reg] = []
+        while True:
+            t = self.peek()
+            if t.kind != "REG":
+                raise ParseError(f"{t.file}:{t.line}:{t.col}: expected REG inside brace list, got {t.kind}")
+            self.i += 1
+            regs.append(Reg(name=t.value, type=ty))
+            if self.accept("COMMA"):
+                continue
+            self.eat("RBRACE")
+            break
+        return RegGroup(regs=tuple(regs))
+
     def _parse_addr(self) -> tuple[Operand, Imm | None]:
         # [reg]  or  [reg+imm]  or  [reg-imm]  or  [param_name]
         self.eat("LBRACK")

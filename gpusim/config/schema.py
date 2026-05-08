@@ -41,6 +41,7 @@ class CacheConfig:
     l2_line_bytes: int = 128
     l2_hit_latency: int = 200
     l2_miss_install_latency: int = 10
+    l2_mshr_slots: int = 32
 
 
 @dataclass
@@ -59,6 +60,8 @@ class TensorCoreConfig:
     tc_wgmma_latency: int = 32
     tc_wgmma_occupancy: int = 4
     wgmma_queue_capacity: int = 16
+    bulk_store_queue_capacity: int = 16
+    bulk_store_latency_per_line: int = 4
 
 
 @dataclass
@@ -73,6 +76,18 @@ class SMConfig:
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     regfile: RegFileConfig = field(default_factory=RegFileConfig)
     fu: FUConfig = field(default_factory=FUConfig)
-    cache: CacheConfig = field(default_factory=CacheConfig)        # NEW
-    hbm: HBMConfig = field(default_factory=HBMConfig)              # NEW
     tensor_core: TensorCoreConfig = field(default_factory=TensorCoreConfig)
+
+
+@dataclass
+class CtaSchedulerConfig:
+    cta_policy: str = "rr"   # "rr" | "greedy"
+
+
+@dataclass
+class DeviceConfig:
+    n_sm: int = 8
+    sm: SMConfig = field(default_factory=SMConfig)
+    cache: CacheConfig = field(default_factory=CacheConfig)
+    hbm: HBMConfig = field(default_factory=HBMConfig)
+    scheduler: CtaSchedulerConfig = field(default_factory=CtaSchedulerConfig)

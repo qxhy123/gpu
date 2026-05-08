@@ -1,7 +1,11 @@
 import numpy as np
 import pathlib
+import sys
 import gpusim
 from gpusim.config.loader import load_default
+
+_DIR = pathlib.Path(__file__).parent
+sys.path.insert(0, str(_DIR.parent.parent))
 
 
 def main():

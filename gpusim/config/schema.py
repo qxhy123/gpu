@@ -38,6 +38,7 @@ class CacheConfig:
     mshr_slots: int = 16
     l2_size_bytes: int = 4 * 1024 * 1024   # 4 MB
     l2_ways: int = 16
+    l2_line_bytes: int = 128
     l2_hit_latency: int = 200
     l2_miss_install_latency: int = 10
 

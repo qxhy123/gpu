@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Protocol
 from gpusim.config.schema import CacheConfig
+from .line import CacheSet, CacheLine
 
 
 class HBMProtocol(Protocol):
@@ -9,17 +10,54 @@ class HBMProtocol(Protocol):
 
 
 class L2Cache:
-    """Mock L2 for M1: returns fixed latency for all requests.
-    M2 replaces this with a tag-precise + write-back implementation."""
+    """Tag-precise L2 cache with write-back + write-allocate semantics."""
 
     def __init__(self, cfg: CacheConfig, hbm: HBMProtocol):
         self.cfg = cfg
-        self.hbm = hbm
+        self._hbm = hbm
+        self._line_bytes = cfg.l2_line_bytes
+        self._n_lines = cfg.l2_size_bytes // self._line_bytes
+        self._n_sets = self._n_lines // cfg.l2_ways
+        self._set_mask = self._n_sets - 1
+        self._set_bits = (self._n_sets - 1).bit_length()
+        self._sets: dict[int, CacheSet] = {
+            i: CacheSet(ways=cfg.l2_ways) for i in range(self._n_sets)
+        }
 
     def fetch(self, *, line_addr: int, now: int) -> int:
-        """L1 calls this on miss. Mock: return now + l2_hit_latency."""
-        return now + self.cfg.l2_hit_latency
+        """L1 calls this on miss. Returns the cycle when L2 has the data ready
+        for L1 to install."""
+        set_idx = line_addr & self._set_mask
+        tag = line_addr >> self._set_bits
+        line = self._sets[set_idx].find(tag)
+
+        if line is not None:                            # HIT
+            self._sets[set_idx].touch(line)
+            return now + self.cfg.l2_hit_latency
+
+        # MISS — fetch from HBM
+        hbm_complete = self._hbm.request(line_addr, now)
+        # install (with potential dirty eviction)
+        evicted = self._sets[set_idx].install(tag=tag, dirty=False)
+        if evicted is not None and evicted.dirty:
+            evicted_addr = (evicted.tag << self._set_bits) | set_idx
+            self._hbm.write_request(evicted_addr, hbm_complete)
+        return hbm_complete + self.cfg.l2_miss_install_latency
 
     def write_through(self, line_addr: int, now: int) -> None:
-        """Receive a write-through from L1. Mock: ignore."""
-        pass
+        """L1 calls this on store-miss (no-write-allocate at L1) or store-hit
+        (write-through). Phase 2: write-allocate at L2 — fetch line if not present,
+        mark it dirty."""
+        set_idx = line_addr & self._set_mask
+        tag = line_addr >> self._set_bits
+        line = self._sets[set_idx].find(tag)
+        if line is not None:                            # HIT — just mark dirty
+            self._sets[set_idx].touch(line)
+            line.dirty = True
+            return
+        # MISS — write-allocate (fetch line from HBM, mark dirty)
+        self._hbm.request(line_addr, now)
+        evicted = self._sets[set_idx].install(tag=tag, dirty=True)
+        if evicted is not None and evicted.dirty:
+            evicted_addr = (evicted.tag << self._set_bits) | set_idx
+            self._hbm.write_request(evicted_addr, now)

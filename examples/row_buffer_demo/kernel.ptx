@@ -1,0 +1,24 @@
+// examples/row_buffer_demo/kernel.ptx
+// stride controls row-buffer locality:
+//  STRIDE=1: sequential → row hits dominate
+//  STRIDE=4096: 512 KB stride per thread (in this layout) → row misses dominate
+.visible .entry row_buffer_demo(.param .u64 A, .param .u64 OUT, .param .u32 STRIDE)
+{
+    .reg .u32 %r<6>; .reg .u64 %rd<5>; .reg .f32 %f<2>;
+    ld.param.u64 %rd1, [A];
+    ld.param.u64 %rd2, [OUT];
+    ld.param.u32 %r1, [STRIDE];
+
+    mov.u32 %r2, %tid.x;
+    mul.lo.s32 %r3, %r2, %r1;       // index = tid * stride
+    shl.b32 %r4, %r3, 2;             // byte offset (4-byte float)
+    cvt.u64.u32 %rd3, %r4;
+    add.u64 %rd4, %rd1, %rd3;
+    ld.global.f32 %f1, [%rd4];
+
+    // store at out[tid]
+    shl.b32 %r4, %r2, 2;
+    cvt.u64.u32 %rd3, %r4;
+    add.u64 %rd2, %rd2, %rd3;
+    st.global.f32 [%rd2], %f1;
+}

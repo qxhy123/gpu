@@ -1,0 +1,22 @@
+// examples/bw_saturation_demo/kernel.ptx
+// 多 CTA 并发流式读 HBM. 高并发下 channel queue 排队.
+.visible .entry bw_demo(.param .u64 A, .param .u64 OUT)
+{
+    .reg .u32 %r<6>; .reg .u64 %rd<5>; .reg .f32 %f<2>;
+    ld.param.u64 %rd1, [A];
+    ld.param.u64 %rd2, [OUT];
+
+    // global thread id = ctaid.x * ntid.x + tid.x
+    mov.u32 %r1, %ctaid.x;
+    mov.u32 %r2, %ntid.x;
+    mov.u32 %r3, %tid.x;
+    mad.lo.s32 %r4, %r1, %r2, %r3;
+
+    shl.b32 %r5, %r4, 2;
+    cvt.u64.u32 %rd3, %r5;
+    add.u64 %rd4, %rd1, %rd3;
+    ld.global.f32 %f1, [%rd4];
+
+    add.u64 %rd2, %rd2, %rd3;
+    st.global.f32 [%rd2], %f1;
+}

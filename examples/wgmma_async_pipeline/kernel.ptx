@@ -1,0 +1,267 @@
+// examples/wgmma_async_pipeline/kernel.ptx
+// TMA + wgmma single-buffered K-tile pipeline
+// Problem: M=64, N=128, K=256 decomposed into K_TILES K-tiles of size 16.
+// Each K-tile:
+//   1. Issue gpusim.tma_desc + cp.async.bulk for A-tile and B-tile
+//   2. mbarrier.try_wait until both copies complete
+//   3. wgmma.fence + wgmma.mma_async (accumulates into %d regs) + commit + wait
+// After loop: store accumulated D to OUT
+//
+// Smem layout (offsets):
+//   smem_A: 0..2047       (64 rows × 16 cols × 2 bytes = 2048)
+//   smem_B: 2048..6143    (16 rows × 128 cols × 2 bytes = 4096)
+//   mbar0:  6144..6151    (8 bytes for mbarrier)
+//
+// Block: 128 threads (4 warps = 1 warp-group)
+// Params: A (u64 ptr, fp16[64][256]), B (u64 ptr, fp16[256][128]),
+//         OUT (u64 ptr, fp32[64][128]), K_TILES (u32, = K/16)
+
+.visible .entry test(.param .u64 A, .param .u64 B, .param .u64 OUT, .param .u32 K_TILES)
+{
+    .reg .u64 %rd<24>;
+    .reg .u32 %r<16>;
+    .reg .f32 %d<64>;
+    .reg .pred %p<6>;
+
+    // ---- Load params ----
+    ld.param.u64 %rd0, [A];
+    ld.param.u64 %rd1, [B];
+    ld.param.u64 %rd2, [OUT];
+    ld.param.u32 %r0, [K_TILES];
+
+    // ---- Smem addresses (absolute offsets used as descriptors) ----
+    // smem_A offset = 0
+    // smem_B offset = 2048
+    // mbar0 offset = 6144
+    mov.u64 %rd10, 0;        // smem_A base offset
+    mov.u64 %rd11, 2048;     // smem_B base offset
+    mov.u64 %rd12, 6144;     // mbar0 smem offset
+
+    // ---- Init mbarrier: expected=2 (one arrive per TMA copy: A and B) ----
+    mbarrier.init.shared::cta [%rd12], 2;
+
+    // ---- Init D accumulator to 0 (64 regs per lane) ----
+    mov.f32 %d0, 0.0;
+    mov.f32 %d1, 0.0;
+    mov.f32 %d2, 0.0;
+    mov.f32 %d3, 0.0;
+    mov.f32 %d4, 0.0;
+    mov.f32 %d5, 0.0;
+    mov.f32 %d6, 0.0;
+    mov.f32 %d7, 0.0;
+    mov.f32 %d8, 0.0;
+    mov.f32 %d9, 0.0;
+    mov.f32 %d10, 0.0;
+    mov.f32 %d11, 0.0;
+    mov.f32 %d12, 0.0;
+    mov.f32 %d13, 0.0;
+    mov.f32 %d14, 0.0;
+    mov.f32 %d15, 0.0;
+    mov.f32 %d16, 0.0;
+    mov.f32 %d17, 0.0;
+    mov.f32 %d18, 0.0;
+    mov.f32 %d19, 0.0;
+    mov.f32 %d20, 0.0;
+    mov.f32 %d21, 0.0;
+    mov.f32 %d22, 0.0;
+    mov.f32 %d23, 0.0;
+    mov.f32 %d24, 0.0;
+    mov.f32 %d25, 0.0;
+    mov.f32 %d26, 0.0;
+    mov.f32 %d27, 0.0;
+    mov.f32 %d28, 0.0;
+    mov.f32 %d29, 0.0;
+    mov.f32 %d30, 0.0;
+    mov.f32 %d31, 0.0;
+    mov.f32 %d32, 0.0;
+    mov.f32 %d33, 0.0;
+    mov.f32 %d34, 0.0;
+    mov.f32 %d35, 0.0;
+    mov.f32 %d36, 0.0;
+    mov.f32 %d37, 0.0;
+    mov.f32 %d38, 0.0;
+    mov.f32 %d39, 0.0;
+    mov.f32 %d40, 0.0;
+    mov.f32 %d41, 0.0;
+    mov.f32 %d42, 0.0;
+    mov.f32 %d43, 0.0;
+    mov.f32 %d44, 0.0;
+    mov.f32 %d45, 0.0;
+    mov.f32 %d46, 0.0;
+    mov.f32 %d47, 0.0;
+    mov.f32 %d48, 0.0;
+    mov.f32 %d49, 0.0;
+    mov.f32 %d50, 0.0;
+    mov.f32 %d51, 0.0;
+    mov.f32 %d52, 0.0;
+    mov.f32 %d53, 0.0;
+    mov.f32 %d54, 0.0;
+    mov.f32 %d55, 0.0;
+    mov.f32 %d56, 0.0;
+    mov.f32 %d57, 0.0;
+    mov.f32 %d58, 0.0;
+    mov.f32 %d59, 0.0;
+    mov.f32 %d60, 0.0;
+    mov.f32 %d61, 0.0;
+    mov.f32 %d62, 0.0;
+    mov.f32 %d63, 0.0;
+
+    // ---- K-tile loop ----
+    // %r1 = k (tile index, 0..K_TILES-1)
+    // %rd13 = A gmem byte offset for current k-tile (k * 16 * 2 = k * 32)
+    // %rd14 = B gmem byte offset for current k-tile (k * 16 * 128 * 2 = k * 4096)
+    // %r2 = mbarrier phase (flips 0->1->0... each time barrier completes)
+    mov.u32 %r1, 0;
+    mov.u64 %rd13, 0;    // A offset: starts at 0, +32 per iter
+    mov.u64 %rd14, 0;    // B offset: starts at 0, +4096 per iter
+    mov.u32 %r2, 0;      // mbar phase: 0 initially (expect phase flip to 1)
+
+LOOP:
+    setp.ge.u32 %p0, %r1, %r0;
+    @%p0 bra DONE;
+
+    // ---- Re-init mbarrier for this iteration (expected=2) ----
+    // (On first iter it was already init'd; reinit resets it each subsequent iter)
+    mbarrier.init.shared::cta [%rd12], 2;
+
+    // ---- Compute A-tile gmem base: rd_A_base = rd0 + rd13 ----
+    add.u64 %rd15, %rd0, %rd13;
+
+    // ---- Issue TMA for A-tile: 16 cols, 64 rows, stride_y=256 elems, 2 bytes/elem ----
+    gpusim.tma_desc %rd20, %rd15, 16, 64, 256, 2;
+    cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes
+        [%rd10], [%rd20], [%rd12];
+
+    // ---- Compute B-tile gmem base: rd_B_base = rd1 + rd14 ----
+    add.u64 %rd16, %rd1, %rd14;
+
+    // ---- Issue TMA for B-tile: 128 cols, 16 rows, stride_y=128 elems, 2 bytes/elem ----
+    gpusim.tma_desc %rd21, %rd16, 128, 16, 128, 2;
+    cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes
+        [%rd11], [%rd21], [%rd12];
+
+    // ---- Wait for both TMAs to complete (mbarrier phase flip from 0->1) ----
+WAIT_MBAR:
+    mbarrier.try_wait.parity.shared::cta %p1, [%rd12], 0;
+    @!%p1 bra WAIT_MBAR;
+
+    // ---- wgmma ----
+    wgmma.fence.sync.aligned;
+
+    wgmma.mma_async.sync.aligned.m64n128k16.f32.f16.f16
+        {%d0, %d1, %d2, %d3, %d4, %d5, %d6, %d7,
+         %d8, %d9, %d10, %d11, %d12, %d13, %d14, %d15,
+         %d16, %d17, %d18, %d19, %d20, %d21, %d22, %d23,
+         %d24, %d25, %d26, %d27, %d28, %d29, %d30, %d31,
+         %d32, %d33, %d34, %d35, %d36, %d37, %d38, %d39,
+         %d40, %d41, %d42, %d43, %d44, %d45, %d46, %d47,
+         %d48, %d49, %d50, %d51, %d52, %d53, %d54, %d55,
+         %d56, %d57, %d58, %d59, %d60, %d61, %d62, %d63},
+        %rd10,
+        %rd11,
+        {%d0, %d1, %d2, %d3, %d4, %d5, %d6, %d7,
+         %d8, %d9, %d10, %d11, %d12, %d13, %d14, %d15,
+         %d16, %d17, %d18, %d19, %d20, %d21, %d22, %d23,
+         %d24, %d25, %d26, %d27, %d28, %d29, %d30, %d31,
+         %d32, %d33, %d34, %d35, %d36, %d37, %d38, %d39,
+         %d40, %d41, %d42, %d43, %d44, %d45, %d46, %d47,
+         %d48, %d49, %d50, %d51, %d52, %d53, %d54, %d55,
+         %d56, %d57, %d58, %d59, %d60, %d61, %d62, %d63};
+
+    wgmma.commit_group.sync.aligned;
+    wgmma.wait_group.sync.aligned 0;
+
+    // ---- Advance offsets and loop counter ----
+    add.u64 %rd13, %rd13, 32;     // A: next 16 cols of fp16 = 32 bytes
+    add.u64 %rd14, %rd14, 4096;   // B: next 16 rows of 128 fp16 = 4096 bytes
+    add.u32 %r1, %r1, 1;
+    bra LOOP;
+
+DONE:
+    // ---- Store D to OUT (row-major 64x128 f32) ----
+    // Layout: warp w (0..3), lane i (0..31), reg j (0..63)
+    //   D[w*16 + i/2][(i%2)*64 + j] = %d_j
+    // OUT is fp32, 64 rows x 128 cols, row-major.
+    shr.u32 %r3, %r0, 5;       // not used — reload tid
+    mov.u32 %r3, %tid.x;       // r3 = tid (0..127)
+    shr.u32 %r4, %r3, 5;       // r4 = warp_w = tid / 32
+    and.b32 %r5, %r3, 31;      // r5 = lane_i = tid % 32
+    shr.u32 %r6, %r5, 1;       // r6 = lane_i / 2
+    shl.b32 %r7, %r4, 4;       // r7 = warp_w * 16
+    add.u32 %r8, %r7, %r6;     // r8 = row = warp_w*16 + lane_i/2
+    and.b32 %r9, %r5, 1;       // r9 = lane_i % 2
+    shl.b32 %r10, %r9, 6;      // r10 = col_base = (lane_i%2) * 64
+    shl.b32 %r11, %r8, 7;      // r11 = row * 128
+    add.u32 %r12, %r11, %r10;  // r12 = out_base_elem = row*128 + col_base
+    mul.lo.u32 %r13, %r12, 4;  // r13 = out_base_byte = out_base_elem * 4
+    cvt.u64.u32 %rd22, %r13;
+    add.u64 %rd23, %rd2, %rd22;  // rd23 = &OUT[row*128 + col_base]
+
+    // Store d0..d63
+    st.global.f32 [%rd23], %d0;
+    st.global.f32 [%rd23 + 4], %d1;
+    st.global.f32 [%rd23 + 8], %d2;
+    st.global.f32 [%rd23 + 12], %d3;
+    st.global.f32 [%rd23 + 16], %d4;
+    st.global.f32 [%rd23 + 20], %d5;
+    st.global.f32 [%rd23 + 24], %d6;
+    st.global.f32 [%rd23 + 28], %d7;
+    st.global.f32 [%rd23 + 32], %d8;
+    st.global.f32 [%rd23 + 36], %d9;
+    st.global.f32 [%rd23 + 40], %d10;
+    st.global.f32 [%rd23 + 44], %d11;
+    st.global.f32 [%rd23 + 48], %d12;
+    st.global.f32 [%rd23 + 52], %d13;
+    st.global.f32 [%rd23 + 56], %d14;
+    st.global.f32 [%rd23 + 60], %d15;
+    st.global.f32 [%rd23 + 64], %d16;
+    st.global.f32 [%rd23 + 68], %d17;
+    st.global.f32 [%rd23 + 72], %d18;
+    st.global.f32 [%rd23 + 76], %d19;
+    st.global.f32 [%rd23 + 80], %d20;
+    st.global.f32 [%rd23 + 84], %d21;
+    st.global.f32 [%rd23 + 88], %d22;
+    st.global.f32 [%rd23 + 92], %d23;
+    st.global.f32 [%rd23 + 96], %d24;
+    st.global.f32 [%rd23 + 100], %d25;
+    st.global.f32 [%rd23 + 104], %d26;
+    st.global.f32 [%rd23 + 108], %d27;
+    st.global.f32 [%rd23 + 112], %d28;
+    st.global.f32 [%rd23 + 116], %d29;
+    st.global.f32 [%rd23 + 120], %d30;
+    st.global.f32 [%rd23 + 124], %d31;
+    st.global.f32 [%rd23 + 128], %d32;
+    st.global.f32 [%rd23 + 132], %d33;
+    st.global.f32 [%rd23 + 136], %d34;
+    st.global.f32 [%rd23 + 140], %d35;
+    st.global.f32 [%rd23 + 144], %d36;
+    st.global.f32 [%rd23 + 148], %d37;
+    st.global.f32 [%rd23 + 152], %d38;
+    st.global.f32 [%rd23 + 156], %d39;
+    st.global.f32 [%rd23 + 160], %d40;
+    st.global.f32 [%rd23 + 164], %d41;
+    st.global.f32 [%rd23 + 168], %d42;
+    st.global.f32 [%rd23 + 172], %d43;
+    st.global.f32 [%rd23 + 176], %d44;
+    st.global.f32 [%rd23 + 180], %d45;
+    st.global.f32 [%rd23 + 184], %d46;
+    st.global.f32 [%rd23 + 188], %d47;
+    st.global.f32 [%rd23 + 192], %d48;
+    st.global.f32 [%rd23 + 196], %d49;
+    st.global.f32 [%rd23 + 200], %d50;
+    st.global.f32 [%rd23 + 204], %d51;
+    st.global.f32 [%rd23 + 208], %d52;
+    st.global.f32 [%rd23 + 212], %d53;
+    st.global.f32 [%rd23 + 216], %d54;
+    st.global.f32 [%rd23 + 220], %d55;
+    st.global.f32 [%rd23 + 224], %d56;
+    st.global.f32 [%rd23 + 228], %d57;
+    st.global.f32 [%rd23 + 232], %d58;
+    st.global.f32 [%rd23 + 236], %d59;
+    st.global.f32 [%rd23 + 240], %d60;
+    st.global.f32 [%rd23 + 244], %d61;
+    st.global.f32 [%rd23 + 248], %d62;
+    st.global.f32 [%rd23 + 252], %d63;
+
+    ret;
+}

@@ -590,9 +590,75 @@ def _read_smem_matrix_fn(smem: "SharedMemory", cta_id: int, base: int,
     return np.frombuffer(raw, dtype=numpy_dtype_for(dtype)).reshape(rows, cols).copy()
 
 
+def _exec_tma_desc_fn(w: WarpFnState, instr: "Instr", tma_pool: "TensorDescriptorPool") -> None:
+    """Functional-mode handler for gpusim.tma_desc: allocate descriptor and write handle."""
+    t0 = w.threads[0]
+    gmem_base = t0.get_u64(instr.src[0].name)
+    dim_x = int(instr.src[1].value)
+    dim_y = int(instr.src[2].value)
+    stride_y = int(instr.src[3].value)
+    elem_bytes = int(instr.src[4].value)
+    handle = tma_pool.allocate(
+        gmem_base=gmem_base, dim_x=dim_x, dim_y=dim_y,
+        stride_y=stride_y, elem_bytes=elem_bytes,
+    )
+    handle_reg = instr.dst[0]
+    for t in w.threads:
+        t.set_u64(handle_reg.name, handle)
+
+
+def _exec_cp_async_bulk_fn(w: WarpFnState, instr: "Instr",
+                            gmem: GlobalMemory, smem: SharedMemory,
+                            cta_id: int,
+                            tma_pool: "TensorDescriptorPool",
+                            mbar_pool: "MbarrierPool") -> None:
+    """Functional-mode handler for cp.async.bulk.tensor.2d: synchronous copy + mbarrier arrive."""
+    from gpusim.core.tma import do_bulk_copy_2d
+    from gpusim.core.mbarrier import MbarrierPool
+    t0 = w.threads[0]
+    smem_dst = t0.get_u64(instr.src[0].name)
+    handle = t0.get_u64(instr.src[1].name)
+    mbar_addr = t0.get_u64(instr.src[2].name)
+    desc = tma_pool.lookup(handle)
+    do_bulk_copy_2d(gmem=gmem, smem=smem, cta_id=cta_id,
+                    smem_dst=smem_dst, desc=desc)
+    # Immediately arrive so try_wait succeeds (functional = instant TMA)
+    mbar_pool.arrive(smem_addr=mbar_addr)
+
+
+def _exec_mbarrier_fn(w: WarpFnState, instr: "Instr",
+                       mbar_pool: "MbarrierPool") -> None:
+    """Functional-mode handler for mbarrier.init / mbarrier.arrive / mbarrier.try_wait."""
+    op = instr.op
+    t0 = w.threads[0]
+    if op.startswith("mbarrier.init."):
+        mbar_addr = t0.get_u64(instr.src[0].name)
+        count = int(instr.src[1].value)
+        mbar_pool.init(smem_addr=mbar_addr, expected=count)
+    elif op.startswith("mbarrier.arrive."):
+        mbar_addr = t0.get_u64(instr.src[0].name)
+        mbar_pool.arrive(smem_addr=mbar_addr)
+    elif op.startswith("mbarrier.try_wait."):
+        pred_reg = instr.dst[0]
+        mbar_addr = t0.get_u64(instr.src[0].name)
+        expected_phase = int(instr.src[1].value)
+        result = mbar_pool.try_wait(smem_addr=mbar_addr, expected_phase=expected_phase)
+        for t in w.threads:
+            t.set_pred(pred_reg.name, bool(result))
+
+
+def _is_tma_mbarrier_op(op: str) -> bool:
+    """Return True for warp-group-uniform TMA / mbarrier ops that need single execution."""
+    return (op == "gpusim.tma_desc" or
+            op.startswith("cp.async.bulk.tensor.") or
+            op.startswith("mbarrier."))
+
+
 def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
                    grid: tuple[int,int,int], block: tuple[int,int,int]) -> None:
     """Run kernel functionally over the grid. Mutates numpy arrays in `params` in place."""
+    from gpusim.core.tma import TensorDescriptorPool
+    from gpusim.core.mbarrier import MbarrierPool
     k = parse_ptx(ptx_src, "<inline>")
     g = GlobalMemory()
     s = SharedMemory()
@@ -615,6 +681,9 @@ def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
             ex = InstrExecutor(kernel=k, gmem=g, smem=s, params=paramspace,
                                cta_id=cta_id, ctaid=(cx,cy,cz),
                                nctaid=grid, ntid=block)
+            # Per-CTA TMA descriptor pool and mbarrier pool for functional mode
+            fn_tma_pool = TensorDescriptorPool()
+            fn_mbar_pool = MbarrierPool()
             warps = []
             for wid in range(warps_per_cta):
                 tid_base = wid * 32
@@ -625,10 +694,11 @@ def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
             done = [False] * len(warps)
             barrier_pcs = [-1] * len(warps)
             wgmma_pcs = [-1] * len(warps)  # warp-group wgmma sync
+            tma_pcs = [-1] * len(warps)    # TMA/mbarrier barrier-like sync per warp-group
             while not all(done):
                 progressed = False
                 for i, (w, st) in enumerate(warps):
-                    if done[i] or barrier_pcs[i] >= 0 or wgmma_pcs[i] >= 0:
+                    if done[i] or barrier_pcs[i] >= 0 or wgmma_pcs[i] >= 0 or tma_pcs[i] >= 0:
                         continue
                     pc = st.top().pc if not st.is_done() else -1
                     if pc < 0 or pc >= len(k.instrs):
@@ -650,6 +720,10 @@ def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
                     # wgmma.mma_async: hold until all warps in warp-group arrive
                     if op.startswith("wgmma.mma_async."):
                         wgmma_pcs[i] = pc
+                        continue
+                    # TMA + mbarrier: warp-group-uniform — collect all warps, execute once from warp 0
+                    if _is_tma_mbarrier_op(op):
+                        tma_pcs[i] = pc
                         continue
                     finished = _step_warp(k, w, ex, st, {})
                     if finished: done[i] = True
@@ -704,6 +778,63 @@ def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
                             warps[j][1].update_top_pc(wgmma_pc + 1)
                             warps[j][1].maybe_pop()
                             wgmma_pcs[j] = -1
+                        progressed = True
+                # Execute TMA/mbarrier ops when all warps in warp-group arrive at same PC
+                # (warp-group uniform ops: execute once from warp 0, propagate result to all)
+                for wg in range(n_wgs):
+                    wg_warp_ids = list(range(wg * wg_size,
+                                             min((wg + 1) * wg_size, warps_per_cta)))
+                    if len(wg_warp_ids) != 4:
+                        continue
+                    wg_tma_pcs = [tma_pcs[j] for j in wg_warp_ids]
+                    if all(p >= 0 for p in wg_tma_pcs) and len(set(wg_tma_pcs)) == 1:
+                        tma_pc = wg_tma_pcs[0]
+                        instr = k.instrs[tma_pc]
+                        op = instr.op
+                        wg_warps = [warps[j][0] for j in wg_warp_ids]
+                        w0 = wg_warps[0]  # elected warp: warp 0 of the group
+                        if op == "gpusim.tma_desc":
+                            handle = fn_tma_pool.allocate(
+                                gmem_base=w0.threads[0].get_u64(instr.src[0].name),
+                                dim_x=int(instr.src[1].value),
+                                dim_y=int(instr.src[2].value),
+                                stride_y=int(instr.src[3].value),
+                                elem_bytes=int(instr.src[4].value),
+                            )
+                            handle_reg = instr.dst[0]
+                            for ww in wg_warps:
+                                for t in ww.threads:
+                                    t.set_u64(handle_reg.name, handle)
+                        elif op.startswith("cp.async.bulk.tensor."):
+                            from gpusim.core.tma import do_bulk_copy_2d
+                            smem_dst = w0.threads[0].get_u64(instr.src[0].name)
+                            handle = w0.threads[0].get_u64(instr.src[1].name)
+                            mbar_addr = w0.threads[0].get_u64(instr.src[2].name)
+                            desc = fn_tma_pool.lookup(handle)
+                            do_bulk_copy_2d(gmem=g, smem=s, cta_id=cta_id,
+                                            smem_dst=smem_dst, desc=desc)
+                            fn_mbar_pool.arrive(smem_addr=mbar_addr)
+                        elif op.startswith("mbarrier.init."):
+                            mbar_addr = w0.threads[0].get_u64(instr.src[0].name)
+                            count = int(instr.src[1].value)
+                            fn_mbar_pool.init(smem_addr=mbar_addr, expected=count)
+                        elif op.startswith("mbarrier.arrive."):
+                            mbar_addr = w0.threads[0].get_u64(instr.src[0].name)
+                            fn_mbar_pool.arrive(smem_addr=mbar_addr)
+                        elif op.startswith("mbarrier.try_wait."):
+                            pred_reg = instr.dst[0]
+                            mbar_addr = w0.threads[0].get_u64(instr.src[0].name)
+                            expected_phase = int(instr.src[1].value)
+                            result = fn_mbar_pool.try_wait(smem_addr=mbar_addr,
+                                                           expected_phase=expected_phase)
+                            for ww in wg_warps:
+                                for t in ww.threads:
+                                    t.set_pred(pred_reg.name, bool(result))
+                        # Advance all warps past this instruction
+                        for j in wg_warp_ids:
+                            warps[j][1].update_top_pc(tma_pc + 1)
+                            warps[j][1].maybe_pop()
+                            tma_pcs[j] = -1
                         progressed = True
                 if not progressed:
                     raise RuntimeError("functional_run: no warp progressed (deadlock)")

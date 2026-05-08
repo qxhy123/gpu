@@ -60,10 +60,30 @@ def gen(kernel: str) -> None:
     print(f"wrote stub {out}")
 
 
+SUPPORTED_KERNELS = [
+    # Phase 1 kernels
+    "vector_add",
+    "reduction_smem",
+    "tiled_matmul",
+    "divergence_demo",
+    "bank_conflict_demo",
+    "coalescing_demo",
+    # Phase 2 additions
+    "l1_thrash_demo",
+    "smem_vs_l1_demo",       # both variants share the same schema
+    "bw_saturation_demo",
+    "row_buffer_demo",
+]
+
+
 def main(argv):
     if not argv:
-        print("usage: gen_reference.py <kernel> [<kernel>...]"); return 2
+        print("usage: gen_reference.py <kernel> [<kernel>...]")
+        print("supported kernels:", ", ".join(SUPPORTED_KERNELS))
+        return 2
     for k in argv:
+        if k not in SUPPORTED_KERNELS:
+            print(f"warning: {k!r} not in SUPPORTED_KERNELS; generating stub anyway")
         gen(k)
     return 0
 

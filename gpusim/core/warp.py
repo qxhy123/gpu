@@ -20,6 +20,9 @@ class StallReason(Enum):
     MSHR_FULL = "MSHR_FULL"
     WGMMA_QUEUE_FULL = "WGMMA_QUEUE_FULL"   # NEW
     WGMMA_WAIT = "WGMMA_WAIT"               # NEW
+    L2_MSHR_FULL = "L2_MSHR_FULL"
+    BULK_STORE_QUEUE_FULL = "BULK_STORE_QUEUE_FULL"
+    BULK_STORE_WAIT = "BULK_STORE_WAIT"
 
 
 @dataclass
@@ -40,6 +43,10 @@ class Warp:
     wgmma_pending_pc: int = -1                              # NEW
     _wgmma_queue_full_stall: bool = False                   # NEW
     _wgmma_wait_stall: bool = False                         # NEW
+    bulk_store_pending_pc: int = -1
+    _l2_mshr_full_stall: bool = False
+    _bulk_store_queue_full_stall: bool = False
+    _bulk_store_wait_stall: bool = False
 
     @property
     def warp_group_id(self) -> int:

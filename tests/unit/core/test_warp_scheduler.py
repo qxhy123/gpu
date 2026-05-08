@@ -50,3 +50,12 @@ def test_stall_reason_has_wgmma_tokens():
     from gpusim.core.warp import StallReason
     assert StallReason.WGMMA_QUEUE_FULL.value == "WGMMA_QUEUE_FULL"
     assert StallReason.WGMMA_WAIT.value == "WGMMA_WAIT"
+
+
+def test_phase4_stall_tokens_and_pending_pc():
+    from gpusim.core.warp import StallReason, Warp
+    assert StallReason.L2_MSHR_FULL.value == "L2_MSHR_FULL"
+    assert StallReason.BULK_STORE_QUEUE_FULL.value == "BULK_STORE_QUEUE_FULL"
+    assert StallReason.BULK_STORE_WAIT.value == "BULK_STORE_WAIT"
+    w = Warp(warp_id=0, kernel=None)
+    assert w.bulk_store_pending_pc == -1

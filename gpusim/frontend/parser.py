@@ -85,7 +85,9 @@ class _Parser:
         return params
 
     def _parse_reg_decls(self) -> RegDecl:
-        counts = {k: 0 for k in ("s32","u32","s64","u64","b32","b64","f32","pred")}
+        # RegDecl tracks the 8 base types; other phase-3 types (f16, bf16, etc.) are parsed but ignored
+        _RECDECL_TYPES = frozenset(("s32","u32","s64","u64","b32","b64","f32","pred"))
+        counts = {k: 0 for k in _RECDECL_TYPES}
         while True:
             # peek for ".reg"
             if not (self.peek().kind == "DOT" and self.peek(1).kind == "IDENT"
@@ -104,7 +106,9 @@ class _Parser:
                 count = int(self.eat("NUM").value)
                 self.eat("GT")
             self.eat("SEMI")
-            counts[ty.value] = count
+            if ty.value in _RECDECL_TYPES:
+                counts[ty.value] = count
+            # else: phase-3 types like f16, bf16 not tracked in RegDecl
         return RegDecl(**counts)
 
     def _parse_body(self, regs: RegDecl) -> tuple[list[Instr], dict[str,int]]:
@@ -128,12 +132,28 @@ class _Parser:
             pred_reg = self.eat("REG").value
             pred = Predicate(reg=pred_reg, negated=negated)
 
-        # opcode dotted: ident('.' ident)*
+        # opcode dotted with optional :: segments: ident( '.' ident | '.' num ident? | '::' ident )*
+        # e.g. cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes
         op_parts = [self.eat("IDENT").value]
-        while self.peek().kind == "DOT" and self.peek(1).kind == "IDENT":
-            self.eat("DOT")
-            op_parts.append(self.eat("IDENT").value)
-        op = ".".join(op_parts)
+        while True:
+            t = self.peek()
+            if t.kind == "DOT" and self.peek(1).kind == "IDENT":
+                self.eat("DOT")
+                op_parts.append("." + self.eat("IDENT").value)
+            elif t.kind == "DOT" and self.peek(1).kind == "NUM":
+                # handle segments like ".2d" which lex as DOT NUM IDENT
+                self.eat("DOT")
+                num_part = self.eat("NUM").value
+                seg = "." + num_part
+                if self.peek().kind == "IDENT":
+                    seg += self.eat("IDENT").value
+                op_parts.append(seg)
+            elif t.kind == "COLONCOLON" and self.peek(1).kind == "IDENT":
+                self.eat("COLONCOLON")
+                op_parts.append("::" + self.eat("IDENT").value)
+            else:
+                break
+        op = "".join(op_parts)
 
         space = self._space_from_op(op)
         ptx_type = self._type_from_op(op)
@@ -154,16 +174,16 @@ class _Parser:
         return None
 
     @staticmethod
-    def _type_from_op(op: str) -> PtxType:
-        # last dotted component that is a known type
+    def _type_from_op(op: str) -> PtxType | None:
+        # last dotted component that is a known type (only dotted, ignore :: segments)
         for part in reversed(op.split(".")):
             try:
                 return PtxType(part)
             except ValueError:
                 continue
-        return PtxType.b32  # fallback for branches and bar.sync etc.
+        return None  # mma/wgmma/cp.async/mbarrier/bra/bar.sync etc.
 
-    def _parse_operands(self, op: str, ty: PtxType) -> tuple[list[Operand], list]:
+    def _parse_operands(self, op: str, ty: PtxType | None) -> tuple[list[Operand], list]:
         if op == "gpusim.tma_desc":
             # gpusim.tma_desc %handle, %gmem_base, dim_x, dim_y, stride_y, elem_bytes;
             handle = self._parse_operand(PtxType.u64)
@@ -178,9 +198,58 @@ class _Parser:
             self.eat("COMMA")
             elem_bytes = self._parse_operand(PtxType.s32)
             return [handle], [gmem_base, dim_x, dim_y, stride_y, elem_bytes]
+
+        if op.startswith("mma.sync.") or op.startswith("wgmma.mma_async."):
+            # dst-group, src-A, src-B[, src-C]
+            dst_grp = self._parse_brace_list(PtxType.f32)
+            self.eat("COMMA")
+            src_a = self._parse_brace_list_or_reg(PtxType.f16)
+            self.eat("COMMA")
+            src_b = self._parse_brace_list_or_reg(PtxType.f16)
+            srcs: list = [src_a, src_b]
+            if self.accept("COMMA"):
+                src_c = self._parse_brace_list_or_reg(PtxType.f32)
+                srcs.append(src_c)
+            return [dst_grp], srcs
+
+        if op in ("wgmma.fence.sync.aligned", "wgmma.commit_group.sync.aligned"):
+            return [], []
+        if op == "wgmma.wait_group.sync.aligned":
+            n_imm = self._parse_operand(PtxType.s32)
+            return [], [n_imm]
+
+        if op.startswith("cp.async.bulk.tensor."):
+            # cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes
+            # [smem_dst], [desc], [mbar];
+            srcs: list = []
+            for _ in range(3):
+                self.eat("LBRACK")
+                addr = self._parse_operand(PtxType.u64)
+                self.eat("RBRACK")
+                srcs.append(addr)
+                if not self.accept("COMMA"):
+                    break
+            return [], srcs
+
+        if op.startswith("mbarrier.init."):
+            self.eat("LBRACK"); addr = self._parse_operand(PtxType.u64); self.eat("RBRACK")
+            self.eat("COMMA"); count = self._parse_operand(PtxType.s32)
+            return [], [addr, count]
+        if op.startswith("mbarrier.arrive."):
+            self.eat("LBRACK"); addr = self._parse_operand(PtxType.u64); self.eat("RBRACK")
+            return [], [addr]
+        if op.startswith("mbarrier.try_wait."):
+            # %pred, [addr], phase
+            pred_dst = self._parse_operand(PtxType.pred)
+            self.eat("COMMA")
+            self.eat("LBRACK"); addr = self._parse_operand(PtxType.u64); self.eat("RBRACK")
+            self.eat("COMMA")
+            phase = self._parse_operand(PtxType.s32)
+            return [pred_dst], [addr, phase]
+
         if op == "bra" or op.endswith(".bra"):
             # bra LABEL;
-            label = self._parse_operand(ty)
+            label = self._parse_operand(ty or PtxType.b32)
             return [], [label]
         if op.startswith("bar."):
             # bar.sync N;  (N optional, default 0)
@@ -193,27 +262,27 @@ class _Parser:
 
         if op.startswith("ld."):
             # ld.<space>.<ty> dst, [addr];
-            dst = self._parse_operand(ty)
+            dst = self._parse_operand(ty or PtxType.b32)
             self.eat("COMMA")
             base, off = self._parse_addr()
-            srcs: list = [base]
+            ld_srcs: list = [base]
             if off is not None:
-                srcs.append(off)
-            return [dst], srcs
+                ld_srcs.append(off)
+            return [dst], ld_srcs
 
         if op.startswith("st."):
             # st.<space>.<ty> [addr], src;
             base, off = self._parse_addr()
             self.eat("COMMA")
-            src = self._parse_operand(ty)
-            srcs_st: list = [base]
+            src = self._parse_operand(ty or PtxType.b32)
+            st_srcs: list = [base]
             if off is not None:
-                srcs_st.append(off)
-            srcs_st.append(src)
-            return [], srcs_st
+                st_srcs.append(off)
+            st_srcs.append(src)
+            return [], st_srcs
 
         # arithmetic / mov / cvt / setp: dst, src...
-        ops = list(self._parse_operand_list(ty))
+        ops = list(self._parse_operand_list(ty or PtxType.b32))
         if not ops:
             return [], []
         return [ops[0]], ops[1:]
@@ -261,6 +330,11 @@ class _Parser:
             self.eat("RBRACE")
             break
         return RegGroup(regs=tuple(regs))
+
+    def _parse_brace_list_or_reg(self, ty: PtxType) -> "Operand":
+        if self.peek().kind == "LBRACE":
+            return self._parse_brace_list(ty)
+        return self._parse_operand(ty)
 
     def _parse_addr(self) -> tuple[Operand, Imm | None]:
         # [reg]  or  [reg+imm]  or  [reg-imm]  or  [param_name]

@@ -60,10 +60,13 @@ class L1Cache:
         # HIT
         if line is not None:
             self._sets[set_idx].touch(line)
-            return Hit(ready_at=now + self.cfg.l1_hit_latency)
+            if mode == "store":
+                self.l2.write_through(line_addr=line_addr, now=now)
+            return Hit(ready_at=now + (1 if mode == "store" else self.cfg.l1_hit_latency))
 
-        # store-miss bypass (no-write-allocate)
+        # store-miss: write-through to L2, no-write-allocate at L1
         if mode == "store":
+            self.l2.write_through(line_addr=line_addr, now=now)
             return Hit(ready_at=now + 1)
 
         # load miss — try MSHR merge

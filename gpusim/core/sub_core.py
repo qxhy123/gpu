@@ -216,17 +216,18 @@ class SubCore:
             info = coalescing_info(addrs, active_mask=w.fn_state.active_mask)
             w.last_gmem = info
 
-            # Phase 2: route ld.global through L1 cache (if available)
-            if self.l1 is not None and op.startswith("ld.global."):
+            # Phase 2: route ld.global and st.global through L1 cache (if available)
+            if self.l1 is not None:
                 from gpusim.core.cache.l1 import Reject
                 line_size = self.cfg.cache.l1_line_bytes
                 line_addrs = sorted({a // line_size for a in addrs if a >= 0})
+                mode = "load" if op.startswith("ld.") else "store"
                 max_ready = now
                 for la in line_addrs:
                     res = self.l1.access(
                         line_addr=la, warp_id=w.warp_id,
-                        dst_regs=tuple(_dst_regs(instr)),
-                        mode="load", now=now,
+                        dst_regs=tuple(_dst_regs(instr)) if mode == "load" else (),
+                        mode=mode, now=now,
                     )
                     if isinstance(res, Reject):
                         # MSHR pool full — rollback: don't mark scoreboard / advance PC
@@ -235,7 +236,7 @@ class SubCore:
                     max_ready = max(max_ready, res.ready_at)
                 latency = max_ready - now
             else:
-                # Phase 1 fixed-latency path (also used for st.global)
+                # Phase 1 fixed-latency path (fallback when no L1)
                 if op.startswith("ld.global."):
                     latency += gmem_n_tx - 1
 

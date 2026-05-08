@@ -7,10 +7,14 @@ class MockL2:
     def __init__(self, latency: int = 200):
         self.latency = latency
         self.requests: list[tuple[int, int]] = []  # (line_addr, request_at)
+        self.write_throughs: list[tuple[int, int]] = []  # (line_addr, now)
 
     def fetch(self, line_addr: int, now: int) -> int:
         self.requests.append((line_addr, now))
         return now + self.latency
+
+    def write_through(self, line_addr: int, now: int) -> None:
+        self.write_throughs.append((line_addr, now))
 
 
 def make_l1(cfg=None) -> tuple[L1Cache, MockL2]:
@@ -89,3 +93,40 @@ def test_eviction_silent_no_writeback():
     # access line0 should miss again (was evicted)
     r2 = l1.access(line_addr=line0, warp_id=0, dst_regs=("r1",), mode="load", now=2000)
     assert isinstance(r2, MissNewMSHR)
+
+
+def test_store_miss_propagates_write_through_to_l2():
+    """Per spec §3.4: store-miss bypasses L1 (no-write-allocate) but
+    still flows write-through to L2."""
+    from unittest.mock import MagicMock
+    cfg = CacheConfig()
+    l2 = MagicMock()
+    l2.fetch = MagicMock(return_value=200)
+    l2.write_through = MagicMock()
+    l1 = L1Cache(cfg, l2)
+    res = l1.access(line_addr=0x100, warp_id=0, dst_regs=(),
+                    mode="store", now=10)
+    assert isinstance(res, Hit)
+    l2.write_through.assert_called_once_with(line_addr=0x100, now=10)
+
+
+def test_store_hit_propagates_write_through_to_l2():
+    """Store hit on L1 line: mark touch, but still write-through to L2."""
+    from unittest.mock import MagicMock
+    cfg = CacheConfig()
+    l2 = MagicMock()
+    l2.fetch = MagicMock(return_value=200)
+    l2.write_through = MagicMock()
+    l1 = L1Cache(cfg, l2)
+    # bring line in
+    res = l1.access(line_addr=0x100, warp_id=0, dst_regs=("r1",),
+                    mode="load", now=0)
+    l1.install_completed_lines(now=res.ready_at)
+    # store hit
+    l2.write_through.reset_mock()
+    res2 = l1.access(line_addr=0x100, warp_id=0, dst_regs=(),
+                     mode="store", now=res.ready_at + 10)
+    assert isinstance(res2, Hit)
+    l2.write_through.assert_called_once_with(
+        line_addr=0x100, now=res.ready_at + 10
+    )

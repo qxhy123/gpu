@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+from dataclasses import asdict
 from pathlib import Path
 import pandas as pd
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -14,6 +15,54 @@ from gpusim.analysis.metrics import bank_conflict_hist
 
 _TPL_DIR = Path(__file__).parent
 _env = Environment(loader=FileSystemLoader(_TPL_DIR), autoescape=select_autoescape())
+
+
+def _total_cycles(rec: Recorder) -> int:
+    """Return the max cycle seen across all Phase 3 events, or 1."""
+    max_c = 1
+    for e in rec.mma_events:
+        max_c = max(max_c, e.cycle)
+    for e in rec.wgmma_events:
+        max_c = max(max_c, e.cycle)
+    for e in rec.tma_events:
+        max_c = max(max_c, e.completion_at)
+    for e in rec.mbarrier_events:
+        max_c = max(max_c, e.cycle)
+    return max_c
+
+
+def _render_tc_utilization(rec: Recorder) -> str:
+    if not rec.mma_events and not rec.wgmma_events:
+        return ""
+    from gpusim.analysis.metrics import tc_utilization
+    mma_df = pd.DataFrame([asdict(e) for e in rec.mma_events]) if rec.mma_events else pd.DataFrame()
+    wgmma_df = pd.DataFrame([asdict(e) for e in rec.wgmma_events]) if rec.wgmma_events else pd.DataFrame()
+    util = tc_utilization(mma_df, wgmma_df, total_cycles=_total_cycles(rec), n_sub_cores=4)
+    return util.to_html(index=False)
+
+
+def _render_precision_distribution(rec: Recorder) -> str:
+    if not rec.mma_events and not rec.wgmma_events:
+        return ""
+    from gpusim.analysis.metrics import precision_distribution
+    mma_df = pd.DataFrame([asdict(e) for e in rec.mma_events]) if rec.mma_events else pd.DataFrame()
+    wgmma_df = pd.DataFrame([asdict(e) for e in rec.wgmma_events]) if rec.wgmma_events else pd.DataFrame()
+    dist = precision_distribution(mma_df, wgmma_df)
+    return dist.to_html()
+
+
+def _render_wgmma_timeline(rec: Recorder) -> str:
+    if not rec.wgmma_events:
+        return ""
+    df = pd.DataFrame([asdict(e) for e in rec.wgmma_events])
+    return df.to_html(index=False)
+
+
+def _render_mbarrier_table(rec: Recorder) -> str:
+    if not rec.mbarrier_events:
+        return ""
+    df = pd.DataFrame([asdict(e) for e in rec.mbarrier_events])
+    return df.to_html(index=False)
 
 
 def _ws_df(rec: Recorder) -> pd.DataFrame:
@@ -109,6 +158,10 @@ def build_html(rec: Recorder, *, kernel_name: str, grid, block,
         channel_util_json=channel_util_json,
         row_buffer_json=row_buffer_json,
         wb_metrics=wb_metrics,
+        tc_utilization_html=_render_tc_utilization(rec),
+        precision_distribution_html=_render_precision_distribution(rec),
+        wgmma_timeline_html=_render_wgmma_timeline(rec),
+        mbarrier_table_html=_render_mbarrier_table(rec),
     )
 
 

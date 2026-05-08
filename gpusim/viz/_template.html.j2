@@ -54,6 +54,26 @@
 </table>
 {% endif %}
 
+{% if tc_utilization_html %}
+<h2>§11 Tensor Core utilization</h2>
+{{ tc_utilization_html | safe }}
+{% endif %}
+
+{% if precision_distribution_html %}
+<h2>§12 Precision distribution</h2>
+{{ precision_distribution_html | safe }}
+{% endif %}
+
+{% if wgmma_timeline_html %}
+<h2>§13 wgmma async pipeline timeline</h2>
+{{ wgmma_timeline_html | safe }}
+{% endif %}
+
+{% if mbarrier_table_html %}
+<h2>§14 Mbarrier flips &amp; TMA arrivals</h2>
+{{ mbarrier_table_html | safe }}
+{% endif %}
+
 <script>
 Plotly.newPlot("stall_pie", {{ stall_pie_json|safe }}, {});
 Plotly.newPlot("ipc_line", {{ ipc_line_json|safe }}, {});

@@ -46,3 +46,18 @@ class BulkStoreQueue:
             self.in_flight = [f for f in self.in_flight if f.commit_group_id != gid]
             self.committed_groups.pop(0)
         return drained
+
+
+def do_bulk_store_2d(*, gmem, smem, cta_id: int, smem_src: int,
+                       desc) -> int:
+    """Copy a dim_y × dim_x tile from smem[smem_src:] to gmem (row-major)
+    using desc.stride_y rows. Returns total bytes stored."""
+    bytes_per_row = desc.dim_x * desc.elem_bytes
+    dst_stride_bytes = desc.stride_y * desc.elem_bytes
+    smem_buf = smem._cta[cta_id]
+    for row in range(desc.dim_y):
+        gmem_addr = desc.gmem_base + row * dst_stride_bytes
+        src_off = smem_src + row * bytes_per_row
+        chunk = bytes(smem_buf[src_off:src_off + bytes_per_row])
+        gmem.store_bytes(gmem_addr, chunk)
+    return desc.dim_y * bytes_per_row

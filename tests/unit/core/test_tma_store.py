@@ -30,3 +30,25 @@ def test_bulk_store_queue_must_wait():
     assert q.must_wait(target_n=3) is False
     assert q.must_wait(target_n=2) is True
     assert q.must_wait(target_n=0) is True
+
+
+def test_do_bulk_store_2d_copies_correct_bytes():
+    import numpy as np
+    from gpusim.core.exec import GlobalMemory, SharedMemory
+    from gpusim.core.tma import TmaDescriptor
+    from gpusim.core.tma_store import do_bulk_store_2d
+
+    s = SharedMemory(size_bytes=8192)
+    s.allocate_cta(0, 8192)
+    src_arr = np.arange(64 * 32, dtype=np.float16).reshape(64, 32)
+    smem_src_off = 0
+    s._cta[0][smem_src_off:smem_src_off + src_arr.nbytes] = (
+        np.frombuffer(src_arr.tobytes(), dtype=np.uint8))
+
+    g = GlobalMemory()
+    dest = np.zeros(64 * 32, dtype=np.float16)
+    g.bind("OUT", dest)
+    desc = TmaDescriptor(gmem_base=g.address_of("OUT"), dim_x=32, dim_y=64,
+                          stride_y=32, elem_bytes=2)
+    do_bulk_store_2d(gmem=g, smem=s, cta_id=0, smem_src=smem_src_off, desc=desc)
+    assert (dest.reshape(64, 32) == src_arr).all()

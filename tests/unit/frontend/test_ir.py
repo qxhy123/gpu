@@ -53,3 +53,14 @@ def test_kernel_labels_immutable():
     k = parse(".visible .entry foo() { .reg .u32 %r<1>; LBL: bar.sync 0; }", "<t>")
     with pytest.raises(TypeError):
         k.labels["new"] = 99  # type: ignore[index]
+
+def test_phase3_ptx_types():
+    from gpusim.frontend.ir import PtxType
+    for t in ("f16", "bf16", "e4m3", "e5m2", "tf32", "s8", "u8", "s16"):
+        assert PtxType(t).value == t
+
+def test_ml_dtypes_importable():
+    import ml_dtypes
+    import numpy as np
+    assert np.dtype(ml_dtypes.bfloat16).itemsize == 2
+    assert np.dtype(ml_dtypes.float8_e4m3fn).itemsize == 1

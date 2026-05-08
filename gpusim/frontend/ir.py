@@ -13,6 +13,15 @@ class PtxType(Enum):
     b64 = "b64"
     f32 = "f32"
     pred = "pred"
+    # Phase 3 additions
+    f16  = "f16"
+    bf16 = "bf16"
+    e4m3 = "e4m3"
+    e5m2 = "e5m2"
+    tf32 = "tf32"
+    s8   = "s8"
+    u8   = "u8"
+    s16  = "s16"
 
 
 class MemSpace(Enum):

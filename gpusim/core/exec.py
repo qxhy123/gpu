@@ -179,6 +179,12 @@ class SharedMemory:
     def store_u32(self, cta_id: int, offset: int, value: int) -> None:
         self._cta[cta_id][offset:offset+4].view(np.uint32)[0] = np.uint32(value & 0xFFFFFFFF)
 
+    def load_f16(self, cta_id: int, offset: int) -> float:
+        return float(self._cta[cta_id][offset:offset+2].view(np.float16)[0])
+
+    def store_f16(self, cta_id: int, offset: int, value: float) -> None:
+        self._cta[cta_id][offset:offset+2].view(np.float16)[0] = np.float16(value)
+
 
 class ParamSpace:
     def __init__(self, params: dict[str, int]):
@@ -432,8 +438,9 @@ class InstrExecutor:
                 elif ty is PtxType.s32:  v = self.gmem.load_s32(addr)
                 else:                    v = self.gmem.load_u32(addr)
             else:
-                if ty is PtxType.f32: v = self.smem.load_f32(self.cta_id, addr)
-                else:                 v = self.smem.load_u32(self.cta_id, addr)
+                if ty is PtxType.f32:  v = self.smem.load_f32(self.cta_id, addr)
+                elif ty is PtxType.f16: v = self.smem.load_f16(self.cta_id, addr)
+                else:                  v = self.smem.load_u32(self.cta_id, addr)
             self._write(t, instr.dst[0], v, ty)
             return
 
@@ -455,8 +462,9 @@ class InstrExecutor:
                 elif ty is PtxType.s32:  self.gmem.store_s32(addr, int(v))
                 else:                    self.gmem.store_u32(addr, int(v))
             else:
-                if ty is PtxType.f32: self.smem.store_f32(self.cta_id, addr, float(v))
-                else:                 self.smem.store_u32(self.cta_id, addr, int(v))
+                if ty is PtxType.f32:  self.smem.store_f32(self.cta_id, addr, float(v))
+                elif ty is PtxType.f16: self.smem.store_f16(self.cta_id, addr, float(v))
+                else:                  self.smem.store_u32(self.cta_id, addr, int(v))
             return
 
         raise NotImplementedError(f"opcode {op!r}")
@@ -558,6 +566,16 @@ def global_addresses_for_warp(w: WarpFnState, instr: Instr) -> list[int]:
     return addrs
 
 
+def _read_smem_matrix_fn(smem: "SharedMemory", cta_id: int, base: int,
+                          rows: int, cols: int, dtype) -> np.ndarray:
+    """Read a row-major rows×cols matrix from shared memory (functional_run helper)."""
+    from gpusim.core.tensor_core.precision import storage_bytes, numpy_dtype_for
+    elem = storage_bytes(dtype)
+    nbytes = rows * cols * elem
+    raw = bytes(smem._cta[cta_id][base:base + nbytes])
+    return np.frombuffer(raw, dtype=numpy_dtype_for(dtype)).reshape(rows, cols).copy()
+
+
 def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
                    grid: tuple[int,int,int], block: tuple[int,int,int]) -> None:
     """Run kernel functionally over the grid. Mutates numpy arrays in `params` in place."""
@@ -592,18 +610,37 @@ def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
 
             done = [False] * len(warps)
             barrier_pcs = [-1] * len(warps)
+            wgmma_pcs = [-1] * len(warps)  # warp-group wgmma sync
             while not all(done):
                 progressed = False
                 for i, (w, st) in enumerate(warps):
-                    if done[i] or barrier_pcs[i] >= 0:
+                    if done[i] or barrier_pcs[i] >= 0 or wgmma_pcs[i] >= 0:
                         continue
                     pc = st.top().pc if not st.is_done() else -1
-                    if pc >= 0 and pc < len(k.instrs) and k.instrs[pc].op == "bar.sync":
+                    if pc < 0 or pc >= len(k.instrs):
+                        finished = _step_warp(k, w, ex, st, {})
+                        if finished: done[i] = True
+                        progressed = True
+                        continue
+                    op = k.instrs[pc].op
+                    if op == "bar.sync":
                         barrier_pcs[i] = pc
+                        continue
+                    # wgmma fence/commit/wait: skip (no-op in functional mode)
+                    if op in ("wgmma.fence.sync.aligned",
+                              "wgmma.commit_group.sync.aligned",
+                              "wgmma.wait_group.sync.aligned"):
+                        st.update_top_pc(pc + 1); st.maybe_pop()
+                        progressed = True
+                        continue
+                    # wgmma.mma_async: hold until all warps in warp-group arrive
+                    if op.startswith("wgmma.mma_async."):
+                        wgmma_pcs[i] = pc
                         continue
                     finished = _step_warp(k, w, ex, st, {})
                     if finished: done[i] = True
                     progressed = True
+                # Release bar.sync when all non-done warps are waiting
                 if all((done[i] or barrier_pcs[i] >= 0) for i in range(len(warps))) \
                    and not all(done):
                     for i in range(len(warps)):
@@ -612,6 +649,48 @@ def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
                             warps[i][1].maybe_pop()
                             barrier_pcs[i] = -1
                     progressed = True
+                # Execute wgmma when all warps in a warp-group arrive at same PC
+                # Warp-group: 4 consecutive warps (warps 0..3, 4..7, etc.)
+                wg_size = 4
+                n_wgs = max(1, warps_per_cta // wg_size)
+                for wg in range(n_wgs):
+                    wg_warp_ids = list(range(wg * wg_size,
+                                             min((wg + 1) * wg_size, warps_per_cta)))
+                    if len(wg_warp_ids) != 4:
+                        continue
+                    wg_pcs = [wgmma_pcs[i] for i in wg_warp_ids]
+                    if all(p >= 0 for p in wg_pcs) and len(set(wg_pcs)) == 1:
+                        wgmma_pc = wg_pcs[0]
+                        instr = k.instrs[wgmma_pc]
+                        from gpusim.core.tensor_core.mma_spec import parse_mma_op
+                        from gpusim.core.tensor_core.wgmma import execute_wgmma_for_group
+                        spec = parse_mma_op(instr.op)
+                        if spec is not None and spec.is_async:
+                            a_desc = instr.src[0]
+                            b_desc = instr.src[1]
+                            wg_warps = [warps[j][0] for j in wg_warp_ids]
+                            a_base = wg_warps[0].threads[0].get_u64(a_desc.name)
+                            b_base = wg_warps[0].threads[0].get_u64(b_desc.name)
+                            a_arr = _read_smem_matrix_fn(
+                                s, cta_id, base=int(a_base),
+                                rows=spec.m, cols=spec.k, dtype=spec.dtype_a)
+                            b_arr = _read_smem_matrix_fn(
+                                s, cta_id, base=int(b_base),
+                                rows=spec.k, cols=spec.n, dtype=spec.dtype_b)
+                            dst_grp = instr.dst[0]
+                            c_grp = instr.src[2] if len(instr.src) > 2 else dst_grp
+                            execute_wgmma_for_group(
+                                spec=spec, warps=wg_warps,
+                                a_smem_array=a_arr, b_smem_array=b_arr,
+                                dst_per_warp=tuple([dst_grp] * 4),
+                                c_per_warp=tuple([c_grp] * 4),
+                            )
+                        # Advance all warps past the wgmma instruction
+                        for j in wg_warp_ids:
+                            warps[j][1].update_top_pc(wgmma_pc + 1)
+                            warps[j][1].maybe_pop()
+                            wgmma_pcs[j] = -1
+                        progressed = True
                 if not progressed:
                     raise RuntimeError("functional_run: no warp progressed (deadlock)")
             s.free_cta(cta_id)

@@ -141,3 +141,111 @@ def wb_traffic_fraction(hbm_df: pd.DataFrame) -> float:
         return 0.0
     wb = (hbm_df["kind"] == "WRITE_BACK").sum()
     return wb / len(hbm_df)
+
+
+def tc_utilization(mma_df, wgmma_df, total_cycles: int,
+                    n_sub_cores: int = 4) -> "pd.DataFrame":
+    """Per-sub-core TC busy %."""
+    busy = [0] * n_sub_cores
+    if mma_df is not None and not mma_df.empty:
+        for _, r in mma_df.iterrows():
+            sc = int(r["warp_id"]) % n_sub_cores
+            busy[sc] += 1
+    if wgmma_df is not None and not wgmma_df.empty:
+        for _, r in wgmma_df[wgmma_df["kind"] == "ISSUE"].iterrows():
+            sc = int(r["warp_group_id"]) % n_sub_cores
+            busy[sc] += 4
+    util = [b / max(total_cycles, 1) for b in busy]
+    return pd.DataFrame({f"sub_core_{i}": [util[i]] for i in range(n_sub_cores)})
+
+
+def precision_distribution(mma_df, wgmma_df) -> "pd.DataFrame":
+    rows: list[dict] = []
+    if mma_df is not None and not mma_df.empty:
+        for _, r in mma_df.iterrows():
+            rows.append({"precision": r["precision"], "flops": int(r["flops_count"])})
+    if wgmma_df is not None and not wgmma_df.empty:
+        for _, r in wgmma_df[wgmma_df["kind"] == "ISSUE"].iterrows():
+            flops = 2 * int(r["shape_m"]) * int(r["shape_n"]) * int(r["shape_k"])
+            rows.append({"precision": r["precision"], "flops": flops})
+    if not rows:
+        return pd.DataFrame(columns=["count", "flops"])
+    df = pd.DataFrame(rows)
+    out = df.groupby("precision").agg(count=("flops", "size"), flops=("flops", "sum"))
+    return out
+
+
+def effective_tflops(mma_df, wgmma_df, total_cycles: int,
+                       freq_ghz: float = 1.0) -> dict:
+    sec = total_cycles / (freq_ghz * 1e9)
+    if sec <= 0:
+        return {}
+    out: dict[str, float] = {}
+    if mma_df is not None and not mma_df.empty:
+        for prec, grp in mma_df.groupby("precision"):
+            out[prec] = float(grp["flops_count"].sum()) / sec / 1e12
+    if wgmma_df is not None and not wgmma_df.empty:
+        for prec, grp in wgmma_df[wgmma_df["kind"] == "ISSUE"].groupby("precision"):
+            flops = (2 * grp["shape_m"] * grp["shape_n"] * grp["shape_k"]).sum()
+            out[prec] = out.get(prec, 0.0) + float(flops) / sec / 1e12
+    return out
+
+
+def async_overlap_ratio(wgmma_df, warp_state_df) -> float:
+    """Fraction of in-flight wgmma cycles during which the issuing warp was not WGMMA_WAIT."""
+    if wgmma_df is None or wgmma_df.empty:
+        return 0.0
+    issues = wgmma_df[wgmma_df["kind"] == "ISSUE"]
+    if issues.empty:
+        return 0.0
+    total_inflight = 0
+    overlapped = 0
+    for _, row in issues.iterrows():
+        start = int(row["cycle"])
+        end = int(row["completion_at"])
+        total_inflight += max(0, end - start)
+        if warp_state_df is not None and not warp_state_df.empty:
+            for _, ws in warp_state_df.iterrows():
+                ws_start = max(start, int(ws["start"]))
+                ws_end = min(end, int(ws["end"]))
+                if ws_end > ws_start and ws.get("state") not in ("WGMMA_WAIT", "IDLE"):
+                    overlapped += ws_end - ws_start
+    return overlapped / max(total_inflight, 1)
+
+
+def mbarrier_wait_distribution(wgmma_df, mbarrier_df) -> "pd.Series":
+    """Histogram of WAIT_GROUP -> next FLIP duration."""
+    if wgmma_df is None or wgmma_df.empty:
+        return pd.Series(dtype=int)
+    waits = wgmma_df[wgmma_df["kind"] == "WAIT_GROUP"]
+    if waits.empty or mbarrier_df is None or mbarrier_df.empty:
+        return pd.Series(dtype=int)
+    flips = mbarrier_df[mbarrier_df["kind"] == "FLIP"]["cycle"].sort_values().tolist()
+    durations: list[int] = []
+    for _, row in waits.iterrows():
+        wcycle = int(row["cycle"])
+        next_flip = next((f for f in flips if f >= wcycle), wcycle)
+        durations.append(next_flip - wcycle)
+    return pd.Series(durations).value_counts().sort_index()
+
+
+def wgmma_queue_pressure(wgmma_df, total_cycles: int) -> "pd.Series":
+    """In-flight wgmma count per cycle."""
+    pressure = [0] * (total_cycles + 1)
+    if wgmma_df is None or wgmma_df.empty:
+        return pd.Series(pressure)
+    for _, row in wgmma_df[wgmma_df["kind"] == "ISSUE"].iterrows():
+        s = int(row["cycle"])
+        e = min(int(row["completion_at"]), total_cycles)
+        for c in range(s, e + 1):
+            pressure[c] += 1
+    return pd.Series(pressure)
+
+
+def tma_bandwidth_utilization(tma_df, total_cycles: int,
+                                total_hbm_bw: float) -> float:
+    """TMA bytes transferred as fraction of total HBM bandwidth capacity."""
+    if tma_df is None or tma_df.empty or total_cycles <= 0 or total_hbm_bw <= 0:
+        return 0.0
+    total_bytes = float(tma_df["bytes_total"].sum())
+    return total_bytes / total_hbm_bw

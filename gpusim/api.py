@@ -82,22 +82,34 @@ class Result:
     def tc_metrics(self) -> dict:
         if self._recorder is None:
             return {}
-        # T28 will add the actual metric functions; for now return event-existence summary
+        from gpusim.analysis.metrics import (
+            tc_utilization, precision_distribution, effective_tflops,
+            async_overlap_ratio, mbarrier_wait_distribution,
+            wgmma_queue_pressure, tma_bandwidth_utilization,
+        )
+        cycles = self.metrics.get("cycles", 1)
+        mma = self.mma_events_df
+        wgmma = self.wgmma_events_df
+        tma = self.tma_events_df
+        mbar = self.mbarrier_events_df
+        warp_state = self.events_df
         return {
-            "mma_count": len(self._recorder.mma_events),
-            "wgmma_count": len(self._recorder.wgmma_events),
-            "tma_count": len(self._recorder.tma_events),
-            "mbarrier_count": len(self._recorder.mbarrier_events),
+            "tc_utilization":     tc_utilization(mma, wgmma, cycles).to_dict() if mma is not None else {},
+            "precision_dist":     precision_distribution(mma, wgmma).to_dict() if mma is not None else {},
+            "effective_tflops":   effective_tflops(mma, wgmma, cycles, freq_ghz=1.0) if mma is not None else {},
+            "async_overlap":      async_overlap_ratio(wgmma, warp_state) if wgmma is not None else 0.0,
+            "wait_distribution":  mbarrier_wait_distribution(wgmma, mbar).to_dict() if wgmma is not None else {},
+            "queue_pressure":     wgmma_queue_pressure(wgmma, cycles).to_dict() if wgmma is not None else {},
+            "tma_bw_util":        tma_bandwidth_utilization(tma, cycles, total_hbm_bw=512.0) if tma is not None else 0.0,
         }
 
     def tc_summary(self) -> str:
         m = self.tc_metrics
         if not m:
             return "no recorder"
-        return (f"mma={m.get('mma_count', 0)} | "
-                f"wgmma={m.get('wgmma_count', 0)} | "
-                f"tma={m.get('tma_count', 0)} | "
-                f"mbarrier={m.get('mbarrier_count', 0)}")
+        flops = m.get("effective_tflops", {})
+        flops_str = ", ".join(f"{k}: {v:.2f}" for k, v in flops.items())
+        return f"TFLOPS [{flops_str}] | async_overlap={m.get('async_overlap', 0):.2f}"
 
     @property
     def cache_metrics(self) -> dict:

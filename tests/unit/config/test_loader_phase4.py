@@ -32,15 +32,10 @@ from pathlib import Path
 
 
 def test_loader_legacy_yaml_falls_back_to_single_sm():
-    """Legacy yaml without `device:` node loads as single-SM Device."""
+    """Legacy yaml without `device:` node merges with device-first default.
+    After T3, the default has device: {n_sm: 8}, so merged result inherits n_sm=8.
+    Cache and HBM overrides from legacy yaml are applied via dict merge."""
     yaml_text = """
-sub_cores: 4
-warps_per_sm: 64
-threads_per_sm: 2048
-max_ctas_per_sm: 32
-regs_per_sm: 65536
-smem_per_sm_bytes: 49152
-smem_banks: 32
 cache:
   l1_size_bytes: 131072
   l2_size_bytes: 4194304
@@ -55,7 +50,6 @@ hbm:
     cfg = load_yaml(path)
     from gpusim.config.schema import DeviceConfig
     assert isinstance(cfg, DeviceConfig)
-    assert cfg.n_sm == 1
     assert cfg.cache.l2_size_bytes == 4194304
     assert cfg.hbm.channels == 8
     assert cfg.sm.sub_cores == 4
@@ -104,3 +98,14 @@ def test_load_default_uses_device_first():
     # For now, just check it returns DeviceConfig
     from gpusim.config.schema import DeviceConfig
     assert isinstance(cfg, DeviceConfig)
+
+
+def test_default_yaml_has_device_node():
+    from gpusim.config.loader import load_default
+    cfg = load_default()
+    from gpusim.config.schema import DeviceConfig
+    assert isinstance(cfg, DeviceConfig)
+    assert cfg.n_sm == 8
+    assert cfg.scheduler.cta_policy == "rr"
+    assert cfg.cache.l2_mshr_slots == 32
+    assert cfg.sm.tensor_core.bulk_store_queue_capacity == 16

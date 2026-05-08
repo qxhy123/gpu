@@ -1,30 +1,45 @@
-sub_cores: 4
-warps_per_sm: 64
-threads_per_sm: 2048
-max_ctas_per_sm: 32
-regs_per_sm: 65536
-smem_per_sm_bytes: 49152
-smem_banks: 32
+device:
+  n_sm: 8
+  scheduler:
+    cta_policy: rr
 
-scheduler:
-  policy: gto
+sm:
+  sub_cores: 4
+  warps_per_sm: 64
+  threads_per_sm: 2048
+  max_ctas_per_sm: 32
+  regs_per_sm: 65536
+  smem_per_sm_bytes: 49152
+  smem_banks: 32
 
-regfile:
-  banks: 4
-  regs_per_subcore: 16384
+  scheduler:
+    policy: gto
 
-fu:
-  fp32_throughput: 1
-  int32_throughput: 1
-  lsu_throughput: 1
-  bru_throughput: 1
-  fp32_latency: 4
-  int32_latency: 4
-  fma_latency: 4
-  bru_latency: 1
-  smem_latency: 20
-  gmem_latency: 400
-  lsu_outstanding: 16
+  regfile:
+    banks: 4
+    regs_per_subcore: 16384
+
+  fu:
+    fp32_throughput: 1
+    int32_throughput: 1
+    lsu_throughput: 1
+    bru_throughput: 1
+    fp32_latency: 4
+    int32_latency: 4
+    fma_latency: 4
+    bru_latency: 1
+    smem_latency: 20
+    gmem_latency: 400
+    lsu_outstanding: 16
+
+  tensor_core:
+    tc_mma_latency: 8
+    tc_mma_occupancy: 1
+    tc_wgmma_latency: 32
+    tc_wgmma_occupancy: 4
+    wgmma_queue_capacity: 16
+    bulk_store_queue_capacity: 16
+    bulk_store_latency_per_line: 4
 
 cache:
   l1_size_bytes: 131072
@@ -35,8 +50,10 @@ cache:
   mshr_slots: 16
   l2_size_bytes: 4194304
   l2_ways: 16
+  l2_line_bytes: 128
   l2_hit_latency: 200
   l2_miss_install_latency: 10
+  l2_mshr_slots: 32
 
 hbm:
   channels: 8
@@ -44,10 +61,3 @@ hbm:
   row_size_bytes: 4096
   row_hit_latency: 10
   row_miss_latency: 30
-
-tensor_core:
-  tc_mma_latency: 8
-  tc_mma_occupancy: 1
-  tc_wgmma_latency: 32
-  tc_wgmma_occupancy: 4
-  wgmma_queue_capacity: 16

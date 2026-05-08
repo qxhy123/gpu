@@ -31,7 +31,14 @@ class SMRunResult:
 
 
 class SM:
-    def __init__(self, cfg: SMConfig, recorder: object | None = None):
+    def __init__(self, cfg, recorder: object | None = None):
+        # M1 transitional shim: accept DeviceConfig and extract sm + inject cache/hbm
+        from gpusim.config.schema import DeviceConfig
+        if isinstance(cfg, DeviceConfig):
+            sm_cfg = cfg.sm
+            sm_cfg._cache_for_run = cfg.cache
+            sm_cfg._hbm_for_run = cfg.hbm
+            cfg = sm_cfg
         self.cfg = cfg
         self.recorder = recorder
 
@@ -66,9 +73,17 @@ class SM:
         from gpusim.core.cache.l1 import L1Cache
         from gpusim.core.cache.l2 import L2Cache
         from gpusim.core.hbm import HBM
-        hbm = HBM(self.cfg.hbm, recorder=self.recorder)
-        l2 = L2Cache(self.cfg.cache, hbm, recorder=self.recorder)
-        l1 = L1Cache(self.cfg.cache, l2, recorder=self.recorder)
+        from gpusim.config.schema import CacheConfig, HBMConfig
+        # M1 transitional shim: cache/hbm injected via transient attrs by api.py
+        cache_cfg = (getattr(self.cfg, "_cache_for_run", None)
+                      or getattr(self.cfg, "cache", None)
+                      or CacheConfig())
+        hbm_cfg = (getattr(self.cfg, "_hbm_for_run", None)
+                    or getattr(self.cfg, "hbm", None)
+                    or HBMConfig())
+        hbm = HBM(hbm_cfg, recorder=self.recorder)
+        l2 = L2Cache(cache_cfg, hbm, recorder=self.recorder)
+        l1 = L1Cache(cache_cfg, l2, recorder=self.recorder)
 
         # Per-warp-group state for wgmma
         from gpusim.core.tensor_core.wgmma import WgmmaQueue

@@ -57,6 +57,13 @@ class SubCore:
     hbm: object | None = None                # for TMA latency
 
     def __post_init__(self):
+        # M1 transitional shim: accept DeviceConfig and extract sm + inject cache/hbm
+        from gpusim.config.schema import DeviceConfig
+        if isinstance(self.cfg, DeviceConfig):
+            sm_cfg = self.cfg.sm
+            sm_cfg._cache_for_run = self.cfg.cache
+            sm_cfg._hbm_for_run = self.cfg.hbm
+            self.cfg = sm_cfg
         self.fus = FUSet(self.cfg.fu)
         self.scheduler = _make_scheduler(self.cfg.scheduler.policy, len(self.warps))
         self.tc_cfg = self.cfg.tensor_core
@@ -473,7 +480,12 @@ class SubCore:
             # Phase 2: route ld.global and st.global through L1 cache (if available)
             if self.l1 is not None:
                 from gpusim.core.cache.l1 import Reject
-                line_size = self.cfg.cache.l1_line_bytes
+                from gpusim.config.schema import CacheConfig as _CacheConfig
+                # M1 transitional shim: cache injected via transient attr by SM/__init__
+                _cache_cfg = (getattr(self.cfg, "_cache_for_run", None)
+                               or getattr(self.cfg, "cache", None)
+                               or _CacheConfig())
+                line_size = _cache_cfg.l1_line_bytes
                 line_addrs = sorted({a // line_size for a in addrs if a >= 0})
                 mode = "load" if op.startswith("ld.") else "store"
                 max_ready = now

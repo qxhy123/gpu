@@ -1,21 +1,21 @@
 from gpusim.config.loader import load_default, load_yaml
-from gpusim.config.schema import SMConfig
+from gpusim.config.schema import DeviceConfig
 
 def test_default_loads():
     c = load_default()
-    assert isinstance(c, SMConfig)
-    assert c.sub_cores == 4
-    assert c.warps_per_sm == 64
-    assert c.smem_banks == 32
-    assert c.regfile.banks == 4
-    assert c.scheduler.policy == "gto"
+    assert isinstance(c, DeviceConfig)
+    assert c.sm.sub_cores == 4
+    assert c.sm.warps_per_sm == 64
+    assert c.sm.smem_banks == 32
+    assert c.sm.regfile.banks == 4
+    assert c.sm.scheduler.policy == "gto"
 
 def test_overrides_via_yaml(tmp_path):
     p = tmp_path / "x.yaml"
-    p.write_text("scheduler:\n  policy: lrr\n")
+    p.write_text("sm:\n  scheduler:\n    policy: lrr\n")
     c = load_yaml(p)
-    assert c.scheduler.policy == "lrr"
-    assert c.sub_cores == 4
+    assert c.sm.scheduler.policy == "lrr"
+    assert c.sm.sub_cores == 4
 
 def test_default_loads_cache_section():
     c = load_default()

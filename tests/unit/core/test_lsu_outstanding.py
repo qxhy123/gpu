@@ -4,8 +4,11 @@ from gpusim.core.sm import SM
 import numpy as np
 
 def test_full_outstanding_queue_causes_structural_stall():
-    cfg = load_default()
+    dev_cfg = load_default()
+    cfg = dev_cfg.sm
     cfg.fu.lsu_outstanding = 2
+    cfg._cache_for_run = dev_cfg.cache
+    cfg._hbm_for_run = dev_cfg.hbm
     src = """
     .visible .entry k(.param .u64 A) {
         .reg .u32 %r<6>; .reg .u64 %rd<6>; .reg .f32 %f<8>;

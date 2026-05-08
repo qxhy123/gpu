@@ -16,7 +16,7 @@ def test_subcore_issues_one_per_cycle():
         ".visible .entry k() { .reg .u32 %r<4>; "
         "add.s32 %r1, %r2, %r3; add.s32 %r2, %r1, %r1; }",
         "<t>")
-    cfg = load_default()
+    cfg = load_default().sm
     g = GlobalMemory(); s = SharedMemory(); s.allocate_cta(0, 4096)
     p = ParamSpace({})
     ex = InstrExecutor(kernel=k, gmem=g, smem=s, params=p, cta_id=0,
@@ -31,7 +31,7 @@ def test_subcore_issues_one_per_cycle():
 
 def test_subcore_idle_when_warp_done():
     k = parse(".visible .entry k() { .reg .u32 %r<2>; mov.u32 %r1, 1; }", "<t>")
-    cfg = load_default()
+    cfg = load_default().sm
     g = GlobalMemory(); s = SharedMemory(); s.allocate_cta(0, 4096)
     p = ParamSpace({})
     ex = InstrExecutor(kernel=k, gmem=g, smem=s, params=p, cta_id=0,
@@ -47,7 +47,7 @@ def test_only_one_warp_issues_per_subcore_per_cycle():
     the others are recorded as STRUCTURAL (not ISSUED)."""
     src = ".visible .entry k() { .reg .u32 %r<4>; mov.u32 %r1, 1; mov.u32 %r2, 2; }"
     k = parse(src, "<t>")
-    cfg = load_default()
+    cfg = load_default().sm
     g = GlobalMemory(); s = SharedMemory(); s.allocate_cta(0, 4096)
     p = ParamSpace({})
     ex = InstrExecutor(kernel=k, gmem=g, smem=s, params=p, cta_id=0,
@@ -82,7 +82,8 @@ def test_subcore_issues_global_load_through_l1():
     }
     """
     k = parse(src, "<t>")
-    cfg = load_default()
+    dev_cfg = load_default()
+    cfg = dev_cfg.sm
     arr = np.arange(32, dtype=np.float32)
     g = GlobalMemory()
     g.bind("A", arr)
@@ -95,9 +96,9 @@ def test_subcore_issues_global_load_through_l1():
     w = Warp(warp_id=0, kernel=k, fn_state=fn,
              stack=SIMTStack(warp_size=32, entry_pc=0))
 
-    hbm = HBM(cfg.hbm)
-    l2 = L2Cache(cfg.cache, hbm)
-    l1 = L1Cache(cfg.cache, l2)
+    hbm = HBM(dev_cfg.hbm)
+    l2 = L2Cache(dev_cfg.cache, hbm)
+    l1 = L1Cache(dev_cfg.cache, l2)
 
     sc = SubCore(sub_core_id=0, cfg=cfg, executor=ex, warps=[w], l1=l1)
     for cycle in range(2000):
@@ -115,8 +116,11 @@ def test_subcore_emits_mshr_full_when_pool_saturated():
     from gpusim.core.hbm import HBM
     import numpy as np
 
-    cfg = load_default()
-    cfg.cache = CacheConfig(mshr_slots=1)  # tiny pool — fills after 1 miss
+    dev_cfg = load_default()
+    custom_cache = CacheConfig(mshr_slots=1)  # tiny pool — fills after 1 miss
+    cfg = dev_cfg.sm
+    cfg._cache_for_run = custom_cache
+    cfg._hbm_for_run = dev_cfg.hbm
     # Use stride-128 (shl by 7 = tid*128) so all 32 threads touch different
     # 128-byte cache lines. The first ld.global allocates the 1 MSHR slot; the
     # second distinct line in the same warp access causes Reject → MSHR_FULL.
@@ -145,9 +149,9 @@ def test_subcore_emits_mshr_full_when_pool_saturated():
     fn = WarpFnState(warp_size=32, tids=tuple(range(32)))
     w = Warp(warp_id=0, kernel=k, fn_state=fn,
              stack=SIMTStack(warp_size=32, entry_pc=0))
-    hbm = HBM(cfg.hbm)
-    l2 = L2Cache(cfg.cache, hbm)
-    l1 = L1Cache(cfg.cache, l2)
+    hbm = HBM(dev_cfg.hbm)
+    l2 = L2Cache(custom_cache, hbm)
+    l1 = L1Cache(custom_cache, l2)
 
     sc = SubCore(sub_core_id=0, cfg=cfg, executor=ex, warps=[w], l1=l1)
     saw_mshr_full = False

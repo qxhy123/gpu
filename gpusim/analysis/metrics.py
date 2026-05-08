@@ -249,3 +249,91 @@ def tma_bandwidth_utilization(tma_df, total_cycles: int,
         return 0.0
     total_bytes = float(tma_df["bytes_total"].sum())
     return total_bytes / total_hbm_bw
+
+
+def per_sm_utilization(warp_state_df, total_cycles: int,
+                         n_sm: int) -> "pd.DataFrame":
+    busy = [0] * n_sm
+    if warp_state_df is not None and not warp_state_df.empty:
+        for _, r in warp_state_df.iterrows():
+            sm_id = int(r.get("sm_id", -1))
+            if sm_id < 0 or sm_id >= n_sm:
+                continue
+            state = r.get("state", "")
+            if state in ("ISSUED", "DIVERGENCE_SERIAL"):
+                busy[sm_id] += int(r["end"]) - int(r["start"]) + 1
+    util = [b / max(total_cycles, 1) for b in busy]
+    return pd.DataFrame({f"sm_{i}": [util[i]] for i in range(n_sm)})
+
+
+def cta_to_sm_mapping(dispatch_df) -> "pd.DataFrame":
+    if dispatch_df is None or dispatch_df.empty:
+        return pd.DataFrame(columns=["cta_id", "sm_id", "dispatch_cycle"])
+    out = dispatch_df.rename(columns={"cycle": "dispatch_cycle"})[
+        ["cta_id", "sm_id", "dispatch_cycle"]]
+    return out.sort_values("cta_id").reset_index(drop=True)
+
+
+def cta_dispatch_latency(dispatch_df, cta_launch_df) -> "pd.Series":
+    if dispatch_df is None or dispatch_df.empty:
+        return pd.Series(dtype=int)
+    if cta_launch_df is None or (hasattr(cta_launch_df, "empty") and cta_launch_df.empty):
+        return dispatch_df["cycle"].value_counts().sort_index()
+    merged = dispatch_df.merge(cta_launch_df, on="cta_id",
+                                  suffixes=("_dispatch", "_launch"))
+    durations = merged["cycle_dispatch"] - merged["cycle_launch"]
+    return durations.value_counts().sort_index()
+
+
+def l2_cross_sm_hit_rate(l2_events_df) -> float:
+    if l2_events_df is None or l2_events_df.empty:
+        return 0.0
+    hits = l2_events_df[l2_events_df["kind"] == "HIT"]
+    if hits.empty:
+        return 0.0
+    cross = (hits["origin_sm"] != hits["hit_sm"]).sum()
+    return float(cross) / len(hits)
+
+
+def l2_mshr_pressure(l2_mshr_events_df, total_cycles: int) -> "pd.Series":
+    pressure = [0] * (total_cycles + 1)
+    if l2_mshr_events_df is None or l2_mshr_events_df.empty:
+        return pd.Series(pressure)
+    in_flight: dict[int, int] = {}
+    events = l2_mshr_events_df.sort_values("cycle")
+    cycle = 0
+    for _, row in events.iterrows():
+        c = int(row["cycle"])
+        for cy in range(cycle, min(c, total_cycles) + 1):
+            pressure[cy] = len(in_flight)
+        cycle = c
+        line = int(row["line_addr"])
+        if row["kind"] == "ALLOC":
+            in_flight[line] = c
+        elif row["kind"] == "RELEASE":
+            in_flight.pop(line, None)
+    for cy in range(cycle, total_cycles + 1):
+        pressure[cy] = len(in_flight)
+    return pd.Series(pressure)
+
+
+def bulk_store_async_overlap_ratio(bulk_store_df, warp_state_df) -> float:
+    if bulk_store_df is None or bulk_store_df.empty:
+        return 0.0
+    issues = bulk_store_df[bulk_store_df["kind"] == "ISSUE"]
+    if issues.empty:
+        return 0.0
+    total_inflight = 0
+    overlapped = 0
+    for _, row in issues.iterrows():
+        start = int(row["cycle"])
+        end = int(row["completion_at"])
+        total_inflight += max(0, end - start)
+        if warp_state_df is not None and not warp_state_df.empty:
+            for _, ws in warp_state_df.iterrows():
+                ws_start = max(start, int(ws["start"]))
+                ws_end = min(end, int(ws["end"]))
+                if ws_end > ws_start and ws.get("state") not in (
+                        "BULK_STORE_WAIT", "IDLE"):
+                    overlapped += ws_end - ws_start
+    return overlapped / max(total_inflight, 1)

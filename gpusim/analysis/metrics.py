@@ -288,6 +288,10 @@ def cta_dispatch_latency(dispatch_df, cta_launch_df) -> "pd.Series":
 def l2_cross_sm_hit_rate(l2_events_df) -> float:
     if l2_events_df is None or l2_events_df.empty:
         return 0.0
+    # origin_sm / hit_sm columns are only present when the L2 cache records
+    # cross-SM provenance; fall back to 0.0 if they are absent.
+    if "origin_sm" not in l2_events_df.columns or "hit_sm" not in l2_events_df.columns:
+        return 0.0
     hits = l2_events_df[l2_events_df["kind"] == "HIT"]
     if hits.empty:
         return 0.0

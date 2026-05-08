@@ -78,6 +78,10 @@ SUPPORTED_KERNELS = [
     "mixed_accum",
     "wgmma_basic",
     "wgmma_async_pipeline",
+    # Phase 4 additions
+    "multi_sm_scheduler",
+    "l2_sharing_demo",
+    "tma_store_matmul",
 ]
 
 

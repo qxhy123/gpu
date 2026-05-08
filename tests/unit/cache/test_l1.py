@@ -9,7 +9,7 @@ class MockL2:
         self.requests: list[tuple[int, int]] = []  # (line_addr, request_at)
         self.write_throughs: list[tuple[int, int]] = []  # (line_addr, now)
 
-    def fetch(self, line_addr: int, now: int) -> int:
+    def fetch(self, line_addr: int, now: int, sm_id: int = -1) -> int:
         self.requests.append((line_addr, now))
         return now + self.latency
 

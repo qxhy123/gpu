@@ -97,3 +97,21 @@ def test_l2_cross_sm_hit_records_metadata_in_recorder():
     hits = [e for e in rec.events if e.get("kind") == "HIT"]
     assert hits and hits[0].get("origin_sm") == 0
     assert hits[0].get("hit_sm") == 5
+
+
+def test_l1_propagates_l2_mshr_full_as_reject():
+    from gpusim.core.cache.l1 import L1Cache, Reject
+    from gpusim.core.cache.l2 import L2Cache
+    from gpusim.config.schema import CacheConfig
+    class _NoOpHbm:
+        def request(self, line_addr, now): return now + 100
+        def write_request(self, line_addr, now): return now + 100
+    cfg = CacheConfig(l2_mshr_slots=1)
+    l2 = L2Cache(cfg, _NoOpHbm())
+    l1 = L1Cache(cfg, l2)
+    r1 = l1.access(line_addr=0x1000, warp_id=0, dst_regs=(),
+                    mode="load", now=0)
+    r2 = l1.access(line_addr=0x2000, warp_id=0, dst_regs=(),
+                    mode="load", now=0)
+    assert isinstance(r2, Reject)
+    assert getattr(r2, "reason", "MSHR_FULL") in ("MSHR_FULL", "L2_MSHR_FULL")

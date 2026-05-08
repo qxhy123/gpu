@@ -29,17 +29,18 @@ class MissMergeMSHR:
 
 @dataclass
 class Reject:
-    pass
+    reason: str = "MSHR_FULL"
 
 
 AccessResult = Hit | MissNewMSHR | MissMergeMSHR | Reject
 
 
 class L1Cache:
-    def __init__(self, cfg: CacheConfig, l2: L2Protocol, recorder=None):
+    def __init__(self, cfg: CacheConfig, l2: L2Protocol, recorder=None, sm_id: int = -1):
         self.cfg = cfg
         self.l2 = l2
         self._recorder = recorder
+        self.sm_id = sm_id
         self._line_bytes = cfg.l1_line_bytes
         self._n_lines = cfg.l1_size_bytes // cfg.l1_line_bytes
         self._n_sets = self._n_lines // cfg.l1_ways
@@ -92,7 +93,10 @@ class L1Cache:
             return Reject()
 
         # allocate new MSHR + downstream fetch
-        l2_complete = self.l2.fetch(line_addr=line_addr, now=now)
+        l2_complete = self.l2.fetch(line_addr=line_addr, now=now,
+                                      sm_id=self.sm_id)
+        if l2_complete < 0:
+            return Reject(reason="L2_MSHR_FULL")
         expected_complete = l2_complete + self.cfg.l1_miss_check_latency
         mshr = self._mshr.allocate(
             line_addr=line_addr, issued_at=now, expected=expected_complete,

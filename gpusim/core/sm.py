@@ -86,7 +86,8 @@ class SM:
             ctaid=(0, 0, 0), nctaid=grid, ntid=block,
         )
         # L1 takes config from L2 (which has cache_cfg)
-        self._l1 = L1Cache(self.l2.cfg, self.l2, recorder=self.recorder)
+        self._l1 = L1Cache(self.l2.cfg, self.l2, recorder=self.recorder,
+                            sm_id=self.sm_id)
         from gpusim.core.tma import TensorDescriptorPool
         self._tma_descriptor_pool = TensorDescriptorPool()
         self._wgmma_queues = {}

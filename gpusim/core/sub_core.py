@@ -199,6 +199,11 @@ class SubCore:
             states[chosen] = StallReason.MSHR_FULL
             self._emit_warp_states(states, now)
             return states
+        if w._l2_mshr_full_stall:
+            w._l2_mshr_full_stall = False
+            states[chosen] = StallReason.L2_MSHR_FULL
+            self._emit_warp_states(states, now)
+            return states
 
         self._emit_warp_states(states, now)
         return states
@@ -497,7 +502,11 @@ class SubCore:
                     )
                     if isinstance(res, Reject):
                         # MSHR pool full — rollback: don't mark scoreboard / advance PC
-                        w._mshr_full_stall = True
+                        reason = getattr(res, "reason", "MSHR_FULL")
+                        if reason == "L2_MSHR_FULL":
+                            w._l2_mshr_full_stall = True
+                        else:
+                            w._mshr_full_stall = True
                         return
                     max_ready = max(max_ready, res.ready_at)
                 latency = max_ready - now

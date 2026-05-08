@@ -43,3 +43,16 @@ def test_negative_number():
 def test_hex_number():
     toks = [tk for tk in tokenize("0xFF", "<t>") if tk.kind not in ("NL","EOF")]
     assert toks[0].kind == "NUM" and toks[0].value == "0xFF"
+
+def test_lexer_coloncolon():
+    from gpusim.frontend.lexer import tokenize
+    toks = [t for t in tokenize("shared::cluster", "<test>") if t.kind != "EOF"]
+    kinds = [t.kind for t in toks]
+    assert kinds == ["IDENT", "COLONCOLON", "IDENT"]
+    assert toks[1].value == "::"
+
+def test_lexer_single_colon_still_works():
+    from gpusim.frontend.lexer import tokenize
+    toks = [t for t in tokenize("L1:", "<test>") if t.kind != "EOF"]
+    kinds = [t.kind for t in toks]
+    assert kinds == ["IDENT", "COLON"]

@@ -94,6 +94,11 @@ def tokenize(src: str, file: str = "<input>") -> Iterator[Tok]:
             yield Tok("IDENT", src[i:j], line, col, file)
             col += j - i; i = j
             continue
+        # double-colon (PTX namespace separator)
+        if c == ":" and i + 1 < n and src[i+1] == ":":
+            yield Tok("COLONCOLON", "::", line, col, file)
+            i += 2; col += 2
+            continue
         # punctuation
         if c in _PUNCT:
             yield Tok(_PUNCT[c], c, line, col, file)

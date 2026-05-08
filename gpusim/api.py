@@ -59,6 +59,47 @@ class Result:
         return hbm_events_dataframe(self._recorder) if self._recorder else None
 
     @property
+    def mma_events_df(self):
+        from gpusim.viz.notebook import mma_events_dataframe
+        return mma_events_dataframe(self._recorder) if self._recorder else None
+
+    @property
+    def wgmma_events_df(self):
+        from gpusim.viz.notebook import wgmma_events_dataframe
+        return wgmma_events_dataframe(self._recorder) if self._recorder else None
+
+    @property
+    def tma_events_df(self):
+        from gpusim.viz.notebook import tma_events_dataframe
+        return tma_events_dataframe(self._recorder) if self._recorder else None
+
+    @property
+    def mbarrier_events_df(self):
+        from gpusim.viz.notebook import mbarrier_events_dataframe
+        return mbarrier_events_dataframe(self._recorder) if self._recorder else None
+
+    @property
+    def tc_metrics(self) -> dict:
+        if self._recorder is None:
+            return {}
+        # T28 will add the actual metric functions; for now return event-existence summary
+        return {
+            "mma_count": len(self._recorder.mma_events),
+            "wgmma_count": len(self._recorder.wgmma_events),
+            "tma_count": len(self._recorder.tma_events),
+            "mbarrier_count": len(self._recorder.mbarrier_events),
+        }
+
+    def tc_summary(self) -> str:
+        m = self.tc_metrics
+        if not m:
+            return "no recorder"
+        return (f"mma={m.get('mma_count', 0)} | "
+                f"wgmma={m.get('wgmma_count', 0)} | "
+                f"tma={m.get('tma_count', 0)} | "
+                f"mbarrier={m.get('mbarrier_count', 0)}")
+
+    @property
     def cache_metrics(self) -> dict:
         if self._recorder is None:
             return {}

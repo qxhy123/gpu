@@ -109,3 +109,66 @@ def write_parquet(rec: Recorder, out: str | Path) -> None:
         "queue_wait": [e.queue_wait for e in hbm_evs],
     })
     pq.write_table(tbl_hbm, out / "hbm.parquet")
+
+    # Phase 3: mma / wgmma / tma / mbarrier
+    if rec.mma_events:
+        tbl_mma = pa.table({
+            "cycle":       [e.cycle for e in rec.mma_events],
+            "warp_id":     [e.warp_id for e in rec.mma_events],
+            "pc":          [e.pc for e in rec.mma_events],
+            "precision":   [e.precision for e in rec.mma_events],
+            "shape_m":     [e.shape_m for e in rec.mma_events],
+            "shape_n":     [e.shape_n for e in rec.mma_events],
+            "shape_k":     [e.shape_k for e in rec.mma_events],
+            "accum_dtype": [e.accum_dtype for e in rec.mma_events],
+            "flops_count": [e.flops_count for e in rec.mma_events],
+        })
+        pq.write_table(tbl_mma, out / "mma.parquet")
+
+    if rec.wgmma_events:
+        tbl_wgmma = pa.table({
+            "kind":            [e.kind for e in rec.wgmma_events],
+            "cycle":           [e.cycle for e in rec.wgmma_events],
+            "warp_group_id":   [e.warp_group_id for e in rec.wgmma_events],
+            "pc":              [e.pc for e in rec.wgmma_events],
+            "precision":       [e.precision for e in rec.wgmma_events],
+            "shape_m":         [e.shape_m for e in rec.wgmma_events],
+            "shape_n":         [e.shape_n for e in rec.wgmma_events],
+            "shape_k":         [e.shape_k for e in rec.wgmma_events],
+            "accum_dtype":     [e.accum_dtype for e in rec.wgmma_events],
+            "commit_group_id": [e.commit_group_id for e in rec.wgmma_events],
+            "wait_n":          [e.wait_n for e in rec.wgmma_events],
+            "completion_at":   [e.completion_at for e in rec.wgmma_events],
+        })
+        pq.write_table(tbl_wgmma, out / "wgmma.parquet")
+
+    if rec.tma_events:
+        tbl_tma = pa.table({
+            "cycle":         [e.cycle for e in rec.tma_events],
+            "completion_at": [e.completion_at for e in rec.tma_events],
+            "smem_dst":      [e.smem_dst for e in rec.tma_events],
+            "gmem_base":     [e.gmem_base for e in rec.tma_events],
+            "dim_x":         [e.dim_x for e in rec.tma_events],
+            "dim_y":         [e.dim_y for e in rec.tma_events],
+            "bytes_total":   [e.bytes_total for e in rec.tma_events],
+            "n_cache_lines": [e.n_cache_lines for e in rec.tma_events],
+            "mbarrier_addr": [e.mbarrier_addr for e in rec.tma_events],
+        })
+        pq.write_table(tbl_tma, out / "tma.parquet")
+
+    if rec.mbarrier_events:
+        tbl_mbarrier = pa.table({
+            "kind":        [e.kind for e in rec.mbarrier_events],
+            "cycle":       [e.cycle for e in rec.mbarrier_events],
+            "cta_id":      [e.cta_id for e in rec.mbarrier_events],
+            "smem_addr":   [e.smem_addr for e in rec.mbarrier_events],
+            "expected":    [e.expected for e in rec.mbarrier_events],
+            "arrived":     [e.arrived for e in rec.mbarrier_events],
+            "phase":       [e.phase for e in rec.mbarrier_events],
+            "pred_result": [e.pred_result for e in rec.mbarrier_events],
+        })
+        pq.write_table(tbl_mbarrier, out / "mbarrier.parquet")
+
+
+# write_all is the canonical name used by Phase 3 callers; delegates to write_parquet
+write_all = write_parquet

@@ -56,3 +56,31 @@ def hbm_events_dataframe(rec) -> pd.DataFrame:
                           "kind":e.kind, "row_kind":e.row_kind,
                           "queue_wait":e.queue_wait}
                          for e in evs])
+
+
+def mma_events_dataframe(rec) -> pd.DataFrame:
+    from dataclasses import asdict
+    if not rec.mma_events:
+        return pd.DataFrame()
+    return pd.DataFrame([asdict(e) for e in rec.mma_events])
+
+
+def wgmma_events_dataframe(rec) -> pd.DataFrame:
+    from dataclasses import asdict
+    if not rec.wgmma_events:
+        return pd.DataFrame()
+    return pd.DataFrame([asdict(e) for e in rec.wgmma_events])
+
+
+def tma_events_dataframe(rec) -> pd.DataFrame:
+    from dataclasses import asdict
+    if not rec.tma_events:
+        return pd.DataFrame()
+    return pd.DataFrame([asdict(e) for e in rec.tma_events])
+
+
+def mbarrier_events_dataframe(rec) -> pd.DataFrame:
+    from dataclasses import asdict
+    if not rec.mbarrier_events:
+        return pd.DataFrame()
+    return pd.DataFrame([asdict(e) for e in rec.mbarrier_events])

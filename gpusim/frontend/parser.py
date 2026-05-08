@@ -247,6 +247,8 @@ class _Parser:
             phase = self._parse_operand(PtxType.s32)
             return [pred_dst], [addr, phase]
 
+        if op == "ret":
+            return [], []
         if op == "bra" or op.endswith(".bra"):
             # bra LABEL;
             label = self._parse_operand(ty or PtxType.b32)

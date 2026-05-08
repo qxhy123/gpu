@@ -1,0 +1,152 @@
+// kernel_fp32.ptx
+// FP32 baseline (no Tensor Core): 32 threads compute full 16x8 output.
+// Thread t: col = t%8, group = t/8 (0..3), handles rows group*4 + 0..3.
+// Each thread computes 4 output elements via scalar FMA loop over K=16.
+// A is 16x16 f32, B is 16x8 f32, C/OUT are 16x8 f32 (all row-major).
+.visible .entry test(
+    .param .u64 A,
+    .param .u64 B,
+    .param .u64 C,
+    .param .u64 OUT)
+{
+    .reg .u64 %rd<12>;
+    .reg .u32 %r<20>;
+    .reg .f32 %f<16>;
+    .reg .pred %p<2>;
+
+    ld.param.u64 %rd0, [A];
+    ld.param.u64 %rd1, [B];
+    ld.param.u64 %rd2, [C];
+    ld.param.u64 %rd3, [OUT];
+
+    mov.u32 %r0, %tid.x;           // t = tid (0..31)
+    and.b32 %r1, %r0, 7;           // col = t % 8
+    shr.u32 %r2, %r0, 3;           // group = t / 8  (0..3)
+    mul.lo.u32 %r3, %r2, 4;        // row_base = group * 4
+
+    // B col base: B + col*4 (B is 16x8 row-major f32; B[0][col] = B + col*4 bytes)
+    mul.lo.u32 %r4, %r1, 4;        // col_bytes = col * 4
+    cvt.u64.u32 %rd4, %r4;
+    add.u64 %rd5, %rd1, %rd4;      // rd5 = B + col*4 (base for col in B)
+
+    // Helper: compute OUT base for row_base+r at col:
+    // OUT[(row_base+r)*8 + col]*4 = OUT + ((row_base+r)*8 + col)*4
+
+    // --- Compute D[row_base + 0][col] ---
+    mul.lo.u32 %r5, %r3, 64;       // row_base * 16 * 4  (A row stride = 16 elements = 64 bytes)
+    cvt.u64.u32 %rd7, %r5;
+    add.u64 %rd8, %rd0, %rd7;      // rd8 = A + row_base*64 (A[row_base])
+
+    mov.f32 %f0, 0.0;
+    mov.u32 %r6, 0;
+LOOP0:
+    setp.ge.u32 %p0, %r6, 16;
+    @%p0 bra END0;
+    mul.lo.u32 %r7, %r6, 4;        // k * 4 bytes
+    cvt.u64.u32 %rd9, %r7;
+    add.u64 %rd9, %rd8, %rd9;      // A[row_base][k]
+    ld.global.f32 %f1, [%rd9];
+    mul.lo.u32 %r8, %r6, 32;       // k * 8 * 4  (B row stride = 8 elements = 32 bytes)
+    cvt.u64.u32 %rd10, %r8;
+    add.u64 %rd10, %rd5, %rd10;    // B[k][col]
+    ld.global.f32 %f2, [%rd10];
+    fma.f32 %f0, %f1, %f2, %f0;
+    add.u32 %r6, %r6, 1;
+    bra LOOP0;
+END0:
+    // OUT[row_base][col] = OUT + (row_base*8 + col)*4
+    mul.lo.u32 %r9, %r3, 32;       // row_base * 8 * 4
+    add.u32 %r9, %r9, %r4;         // + col_bytes
+    cvt.u64.u32 %rd11, %r9;
+    add.u64 %rd11, %rd3, %rd11;
+    st.global.f32 [%rd11], %f0;
+
+    // --- Compute D[row_base + 1][col] ---
+    add.u32 %r10, %r3, 1;          // row_base + 1
+    mul.lo.u32 %r11, %r10, 64;
+    cvt.u64.u32 %rd7, %r11;
+    add.u64 %rd8, %rd0, %rd7;
+
+    mov.f32 %f3, 0.0;
+    mov.u32 %r6, 0;
+LOOP1:
+    setp.ge.u32 %p0, %r6, 16;
+    @%p0 bra END1;
+    mul.lo.u32 %r7, %r6, 4;
+    cvt.u64.u32 %rd9, %r7;
+    add.u64 %rd9, %rd8, %rd9;
+    ld.global.f32 %f4, [%rd9];
+    mul.lo.u32 %r8, %r6, 32;
+    cvt.u64.u32 %rd10, %r8;
+    add.u64 %rd10, %rd5, %rd10;
+    ld.global.f32 %f5, [%rd10];
+    fma.f32 %f3, %f4, %f5, %f3;
+    add.u32 %r6, %r6, 1;
+    bra LOOP1;
+END1:
+    mul.lo.u32 %r12, %r10, 32;     // (row_base+1) * 8 * 4
+    add.u32 %r12, %r12, %r4;
+    cvt.u64.u32 %rd11, %r12;
+    add.u64 %rd11, %rd3, %rd11;
+    st.global.f32 [%rd11], %f3;
+
+    // --- Compute D[row_base + 2][col] ---
+    add.u32 %r10, %r3, 2;
+    mul.lo.u32 %r11, %r10, 64;
+    cvt.u64.u32 %rd7, %r11;
+    add.u64 %rd8, %rd0, %rd7;
+
+    mov.f32 %f6, 0.0;
+    mov.u32 %r6, 0;
+LOOP2:
+    setp.ge.u32 %p0, %r6, 16;
+    @%p0 bra END2;
+    mul.lo.u32 %r7, %r6, 4;
+    cvt.u64.u32 %rd9, %r7;
+    add.u64 %rd9, %rd8, %rd9;
+    ld.global.f32 %f7, [%rd9];
+    mul.lo.u32 %r8, %r6, 32;
+    cvt.u64.u32 %rd10, %r8;
+    add.u64 %rd10, %rd5, %rd10;
+    ld.global.f32 %f8, [%rd10];
+    fma.f32 %f6, %f7, %f8, %f6;
+    add.u32 %r6, %r6, 1;
+    bra LOOP2;
+END2:
+    mul.lo.u32 %r12, %r10, 32;
+    add.u32 %r12, %r12, %r4;
+    cvt.u64.u32 %rd11, %r12;
+    add.u64 %rd11, %rd3, %rd11;
+    st.global.f32 [%rd11], %f6;
+
+    // --- Compute D[row_base + 3][col] ---
+    add.u32 %r10, %r3, 3;
+    mul.lo.u32 %r11, %r10, 64;
+    cvt.u64.u32 %rd7, %r11;
+    add.u64 %rd8, %rd0, %rd7;
+
+    mov.f32 %f9, 0.0;
+    mov.u32 %r6, 0;
+LOOP3:
+    setp.ge.u32 %p0, %r6, 16;
+    @%p0 bra END3;
+    mul.lo.u32 %r7, %r6, 4;
+    cvt.u64.u32 %rd9, %r7;
+    add.u64 %rd9, %rd8, %rd9;
+    ld.global.f32 %f10, [%rd9];
+    mul.lo.u32 %r8, %r6, 32;
+    cvt.u64.u32 %rd10, %r8;
+    add.u64 %rd10, %rd5, %rd10;
+    ld.global.f32 %f11, [%rd10];
+    fma.f32 %f9, %f10, %f11, %f9;
+    add.u32 %r6, %r6, 1;
+    bra LOOP3;
+END3:
+    mul.lo.u32 %r12, %r10, 32;
+    add.u32 %r12, %r12, %r4;
+    cvt.u64.u32 %rd11, %r12;
+    add.u64 %rd11, %rd3, %rd11;
+    st.global.f32 [%rd11], %f9;
+
+    ret;
+}

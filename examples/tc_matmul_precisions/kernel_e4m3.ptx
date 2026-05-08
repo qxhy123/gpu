@@ -1,0 +1,97 @@
+// kernel_e4m3.ptx
+// mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32
+// A: 16x32 fp8_e4m3, B: 32x8 fp8_e4m3, C/OUT: 16x8 f32
+// A layout: lane i, reg j -> A[i/2][(i%2)*16 + j]  (K=32, half_K=16, 16 regs/lane)
+// B layout: lane i, reg j -> B[i][j]                (K=32, lane covers full row, 8 regs/lane)
+// D layout: lane i, reg j -> D[i/2][(i%2)*4 + j]    (4 regs/lane)
+.visible .entry test(
+    .param .u64 A,
+    .param .u64 B,
+    .param .u64 C,
+    .param .u64 OUT)
+{
+    .reg .u64 %rd<12>;
+    .reg .u32 %r<12>;
+    .reg .e4m3 %a<16>;
+    .reg .e4m3 %b<8>;
+    .reg .f32 %d<4>;
+    .reg .f32 %c<4>;
+    .reg .pred %p<2>;
+
+    ld.param.u64 %rd0, [A];
+    ld.param.u64 %rd1, [B];
+    ld.param.u64 %rd2, [C];
+    ld.param.u64 %rd3, [OUT];
+
+    mov.u32 %r0, %tid.x;               // lane = tid (0..31)
+
+    // row = lane/2,  col_half = lane%2
+    shr.u32 %r1, %r0, 1;               // row = lane/2  (0..15)
+    and.b32 %r2, %r0, 1;               // col_half = lane%2
+
+    // A address: A[row][(col_half)*16] in e4m3 units (1 byte each)
+    // byte offset = row*32 + col_half*16
+    shl.b32 %r3, %r2, 4;               // col_half * 16
+    mul.lo.u32 %r4, %r1, 32;           // row * 32
+    add.u32 %r4, %r4, %r3;             // row*32 + col_half*16
+    cvt.u64.u32 %rd4, %r4;
+    add.u64 %rd5, %rd0, %rd4;          // A base for this lane
+
+    ld.global.e4m3 %a0, [%rd5];
+    ld.global.e4m3 %a1, [%rd5 + 1];
+    ld.global.e4m3 %a2, [%rd5 + 2];
+    ld.global.e4m3 %a3, [%rd5 + 3];
+    ld.global.e4m3 %a4, [%rd5 + 4];
+    ld.global.e4m3 %a5, [%rd5 + 5];
+    ld.global.e4m3 %a6, [%rd5 + 6];
+    ld.global.e4m3 %a7, [%rd5 + 7];
+    ld.global.e4m3 %a8, [%rd5 + 8];
+    ld.global.e4m3 %a9, [%rd5 + 9];
+    ld.global.e4m3 %a10, [%rd5 + 10];
+    ld.global.e4m3 %a11, [%rd5 + 11];
+    ld.global.e4m3 %a12, [%rd5 + 12];
+    ld.global.e4m3 %a13, [%rd5 + 13];
+    ld.global.e4m3 %a14, [%rd5 + 14];
+    ld.global.e4m3 %a15, [%rd5 + 15];
+
+    // B address: B[lane][0] - lane i covers full row of 8 e4m3 elements
+    // byte offset = lane * 8
+    mul.lo.u32 %r5, %r0, 8;            // lane * 8
+    cvt.u64.u32 %rd6, %r5;
+    add.u64 %rd7, %rd1, %rd6;          // B[lane]
+
+    ld.global.e4m3 %b0, [%rd7];
+    ld.global.e4m3 %b1, [%rd7 + 1];
+    ld.global.e4m3 %b2, [%rd7 + 2];
+    ld.global.e4m3 %b3, [%rd7 + 3];
+    ld.global.e4m3 %b4, [%rd7 + 4];
+    ld.global.e4m3 %b5, [%rd7 + 5];
+    ld.global.e4m3 %b6, [%rd7 + 6];
+    ld.global.e4m3 %b7, [%rd7 + 7];
+
+    // C zero-init
+    mov.f32 %c0, 0.0;
+    mov.f32 %c1, 0.0;
+    mov.f32 %c2, 0.0;
+    mov.f32 %c3, 0.0;
+
+    mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32
+        {%d0, %d1, %d2, %d3},
+        {%a0, %a1, %a2, %a3, %a4, %a5, %a6, %a7, %a8, %a9, %a10, %a11, %a12, %a13, %a14, %a15},
+        {%b0, %b1, %b2, %b3, %b4, %b5, %b6, %b7},
+        {%c0, %c1, %c2, %c3};
+
+    // Write D back: D[row][(col_half)*4+j] -> OUT (f32)
+    shl.b32 %r7, %r2, 2;               // col_half * 4
+    mul.lo.u32 %r8, %r1, 8;            // row * 8
+    add.u32 %r8, %r8, %r7;
+    mul.lo.u32 %r8, %r8, 4;            // * 4 bytes per f32
+    cvt.u64.u32 %rd8, %r8;
+    add.u64 %rd9, %rd3, %rd8;
+    st.global.f32 [%rd9], %d0;
+    st.global.f32 [%rd9 + 4], %d1;
+    st.global.f32 [%rd9 + 8], %d2;
+    st.global.f32 [%rd9 + 12], %d3;
+
+    ret;
+}

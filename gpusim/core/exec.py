@@ -93,6 +93,68 @@ class GlobalMemory:
         buf, off = self._seg_for(addr)
         buf[off:off+4].view(np.uint32)[0] = np.uint32(v & 0xFFFFFFFF)
 
+    def load_s32(self, addr: int) -> int:
+        buf, off = self._seg_for(addr)
+        return int(buf[off:off+4].view(np.int32)[0])
+
+    def store_s32(self, addr: int, v: int) -> None:
+        buf, off = self._seg_for(addr)
+        buf[off:off+4].view(np.int32)[0] = np.int32(v)
+
+    def load_bytes(self, addr: int, n: int) -> bytes:
+        buf, off = self._seg_for(addr)
+        return bytes(buf[off:off+n])
+
+    def store_bytes(self, addr: int, data: bytes) -> None:
+        buf, off = self._seg_for(addr)
+        buf[off:off+len(data)] = np.frombuffer(data, dtype=np.uint8)
+
+    def load_f16(self, addr: int) -> float:
+        buf, off = self._seg_for(addr)
+        return float(buf[off:off+2].view(np.float16)[0])
+
+    def store_f16(self, addr: int, v: float) -> None:
+        buf, off = self._seg_for(addr)
+        buf[off:off+2].view(np.float16)[0] = np.float16(v)
+
+    def load_bf16(self, addr: int) -> float:
+        import ml_dtypes
+        buf, off = self._seg_for(addr)
+        return float(buf[off:off+2].view(ml_dtypes.bfloat16)[0])
+
+    def store_bf16(self, addr: int, v: float) -> None:
+        import ml_dtypes
+        buf, off = self._seg_for(addr)
+        buf[off:off+2].view(ml_dtypes.bfloat16)[0] = ml_dtypes.bfloat16(v)
+
+    def load_e4m3(self, addr: int) -> float:
+        import ml_dtypes
+        buf, off = self._seg_for(addr)
+        return float(buf[off:off+1].view(ml_dtypes.float8_e4m3fn)[0])
+
+    def store_e4m3(self, addr: int, v: float) -> None:
+        import ml_dtypes
+        buf, off = self._seg_for(addr)
+        buf[off:off+1].view(ml_dtypes.float8_e4m3fn)[0] = ml_dtypes.float8_e4m3fn(v)
+
+    def load_e5m2(self, addr: int) -> float:
+        import ml_dtypes
+        buf, off = self._seg_for(addr)
+        return float(buf[off:off+1].view(ml_dtypes.float8_e5m2)[0])
+
+    def store_e5m2(self, addr: int, v: float) -> None:
+        import ml_dtypes
+        buf, off = self._seg_for(addr)
+        buf[off:off+1].view(ml_dtypes.float8_e5m2)[0] = ml_dtypes.float8_e5m2(v)
+
+    def load_s8(self, addr: int) -> int:
+        buf, off = self._seg_for(addr)
+        return int(buf[off:off+1].view(np.int8)[0])
+
+    def store_s8(self, addr: int, v: int) -> None:
+        buf, off = self._seg_for(addr)
+        buf[off:off+1].view(np.int8)[0] = np.int8(v)
+
 
 class SharedMemory:
     def __init__(self, size_bytes: int = 48 * 1024):
@@ -181,8 +243,11 @@ class InstrExecutor:
             return t.get_s32(name)
         if reg_ty in (PtxType.s64, PtxType.u64, PtxType.b64):
             return t.get_u64(name)
-        if reg_ty is PtxType.f32:
+        if reg_ty in (PtxType.f32, PtxType.f16, PtxType.bf16, PtxType.e4m3,
+                      PtxType.e5m2, PtxType.tf32):
             return t.get_f32(name)
+        if reg_ty is PtxType.s8:
+            return t.get_s32(name)
         if reg_ty is PtxType.pred:
             return t.get_pred(name)
         return t.get_u32(name)
@@ -200,7 +265,12 @@ class InstrExecutor:
             t.set_s32(name, int(value))
         elif ty in (PtxType.s64, PtxType.u64, PtxType.b64):
             t.set_u64(name, int(value))
-        elif ty is PtxType.f32:
+        elif ty in (PtxType.f32, PtxType.f16, PtxType.bf16, PtxType.e4m3,
+                    PtxType.e5m2, PtxType.tf32):
+            t.set_f32(name, float(value))   # store all floats in f32 register slot
+        elif ty is PtxType.s8:
+            # s8: store in s32/u32 for integer reads, and f32 for mma collect
+            t.set_s32(name, int(value)); t.set_u32(name, int(value) & 0xFFFFFFFF)
             t.set_f32(name, float(value))
         elif ty is PtxType.pred:
             t.set_pred(name, bool(value))
@@ -229,6 +299,16 @@ class InstrExecutor:
         # specials — bra and bar.sync return without per-lane work; control handled by caller
         if op == "bra" or op == "bar.sync" or op == "membar.cta":
             return
+        # mma.sync — warp-level operation (all lanes participate)
+        if op.startswith("mma.sync."):
+            from gpusim.core.tensor_core.mma_spec import parse_mma_op
+            from gpusim.core.tensor_core.mma import execute_mma
+            spec = parse_mma_op(op)
+            if spec is not None:
+                dst = instr.dst[0]; a = instr.src[0]; b = instr.src[1]
+                c = instr.src[2] if len(instr.src) > 2 else dst
+                execute_mma(spec, w, dst, a, b, c)
+            return
         for lane in range(w.warp_size):
             if not self._lane_active(w, lane, instr):
                 continue
@@ -238,6 +318,10 @@ class InstrExecutor:
     def _exec_lane(self, t: ThreadState, instr: Instr, lane: int, tid_x: int = -1) -> None:
         op = instr.op
         ty = instr.type
+
+        # ret — no-op; warp terminates when PC passes end of instructions
+        if op == "ret":
+            return
 
         # mov
         if op.startswith("mov."):
@@ -270,14 +354,19 @@ class InstrExecutor:
             return
 
         # arithmetic
-        if op in ("add.s32","add.u32","sub.s32","mul.lo.s32","shl.b32","shr.s32","add.u64","sub.u64"):
+        if op in ("add.s32","add.u32","sub.s32","mul.lo.s32","mul.lo.u32",
+                  "shl.b32","shr.s32","shr.u32","add.u64","sub.u64",
+                  "and.b32","or.b32","xor.b32"):
             a = self._read(t, instr.src[0], ty)
             b = self._read(t, instr.src[1], ty)
-            if op.startswith("add."):    r = a + b
-            elif op.startswith("sub."):  r = a - b
-            elif op == "mul.lo.s32":     r = (a * b) & 0xFFFFFFFF
-            elif op == "shl.b32":        r = (a << (b & 31)) & 0xFFFFFFFF
-            elif op == "shr.s32":        r = (a >> (b & 31))
+            if op.startswith("add."):        r = a + b
+            elif op.startswith("sub."):      r = a - b
+            elif op in ("mul.lo.s32","mul.lo.u32"):  r = (a * b) & 0xFFFFFFFF
+            elif op == "shl.b32":            r = (a << (b & 31)) & 0xFFFFFFFF
+            elif op in ("shr.s32","shr.u32"): r = (a >> (b & 31))
+            elif op == "and.b32":            r = (a & b) & 0xFFFFFFFF
+            elif op == "or.b32":             r = (a | b) & 0xFFFFFFFF
+            elif op == "xor.b32":            r = (a ^ b) & 0xFFFFFFFF
             self._write(t, instr.dst[0], r, ty)
             return
 
@@ -334,8 +423,14 @@ class InstrExecutor:
                 off = int(instr.src[1].value)
             addr = int(base) + off
             if op.startswith("ld.global."):
-                if ty is PtxType.f32: v = self.gmem.load_f32(addr)
-                else:                 v = self.gmem.load_u32(addr)
+                if   ty is PtxType.f32:  v = self.gmem.load_f32(addr)
+                elif ty is PtxType.f16:  v = self.gmem.load_f16(addr)
+                elif ty is PtxType.bf16: v = self.gmem.load_bf16(addr)
+                elif ty is PtxType.e4m3: v = self.gmem.load_e4m3(addr)
+                elif ty is PtxType.e5m2: v = self.gmem.load_e5m2(addr)
+                elif ty is PtxType.s8:   v = self.gmem.load_s8(addr)
+                elif ty is PtxType.s32:  v = self.gmem.load_s32(addr)
+                else:                    v = self.gmem.load_u32(addr)
             else:
                 if ty is PtxType.f32: v = self.smem.load_f32(self.cta_id, addr)
                 else:                 v = self.smem.load_u32(self.cta_id, addr)
@@ -351,8 +446,14 @@ class InstrExecutor:
             addr = int(base) + off
             v = self._read(t, instr.src[src_pos], ty)
             if op.startswith("st.global."):
-                if ty is PtxType.f32: self.gmem.store_f32(addr, float(v))
-                else:                 self.gmem.store_u32(addr, int(v))
+                if   ty is PtxType.f32:  self.gmem.store_f32(addr, float(v))
+                elif ty is PtxType.f16:  self.gmem.store_f16(addr, float(v))
+                elif ty is PtxType.bf16: self.gmem.store_bf16(addr, float(v))
+                elif ty is PtxType.e4m3: self.gmem.store_e4m3(addr, float(v))
+                elif ty is PtxType.e5m2: self.gmem.store_e5m2(addr, float(v))
+                elif ty is PtxType.s8:   self.gmem.store_s8(addr, int(v))
+                elif ty is PtxType.s32:  self.gmem.store_s32(addr, int(v))
+                else:                    self.gmem.store_u32(addr, int(v))
             else:
                 if ty is PtxType.f32: self.smem.store_f32(self.cta_id, addr, float(v))
                 else:                 self.smem.store_u32(self.cta_id, addr, int(v))

@@ -65,15 +65,21 @@ def _collect_d_or_c(w: WarpFnState, group: RegGroup, M: int, N: int,
 
 def _distribute_d(w: WarpFnState, group: RegGroup, M: int, N: int,
                    D: np.ndarray) -> None:
-    """Write D[M][N] back into lane registers (D layout matches C)."""
+    """Write D[M][N] back into lane registers (D layout matches C).
+    Integer dtypes (int32) are stored in both s32 and f32 slots for cross-type reads."""
     half_N = N // 2
     n_regs = len(group.regs)
+    is_int = D.dtype in (np.int32, np.int16, np.int8)
     D32 = D.astype(np.float32)
     for lane in range(32):
         row = lane // 2
         col_base = (lane % 2) * half_N
         for j in range(n_regs):
-            w.threads[lane].set_f32(group.regs[j].name, float(D32[row, col_base + j]))
+            val = D32[row, col_base + j]
+            w.threads[lane].set_f32(group.regs[j].name, float(val))
+            if is_int:
+                w.threads[lane].set_s32(group.regs[j].name, int(val))
+                w.threads[lane].set_u32(group.regs[j].name, int(val) & 0xFFFFFFFF)
 
 
 def execute_mma(spec: MmaSpec, w: WarpFnState,

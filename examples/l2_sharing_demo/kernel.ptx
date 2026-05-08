@@ -1,0 +1,35 @@
+// examples/l2_sharing_demo/kernel.ptx
+// Each CTA reads RO_IN at offset (ctaid*8 + tid)*4 and writes to OUT at
+// offset (ctaid*32 + tid)*4.  Overlapping read windows let cross-SM L2 share.
+.visible .entry test(.param .u64 RO_IN, .param .u64 OUT, .param .u32 RO_LEN)
+{
+    .reg .u64 %rd<8>;
+    .reg .u32 %r<8>;
+    .reg .f32 %f<4>;
+
+    ld.param.u64 %rd0, [RO_IN];
+    ld.param.u64 %rd1, [OUT];
+    ld.param.u32 %r10, [RO_LEN];
+
+    mov.u32 %r0, %ctaid.x;
+    mov.u32 %r1, %tid.x;
+
+    // read index = ctaid*8 + tid
+    shl.b32 %r2, %r0, 3;
+    add.s32 %r2, %r2, %r1;
+    // byte offset = index * 4
+    mul.lo.s32 %r3, %r2, 4;
+    cvt.u64.u32 %rd4, %r3;
+    add.u64 %rd5, %rd0, %rd4;
+    ld.global.f32 %f0, [%rd5];
+
+    // write index = ctaid*32 + tid
+    shl.b32 %r4, %r0, 5;
+    add.s32 %r4, %r4, %r1;
+    // byte offset = index * 4
+    mul.lo.s32 %r5, %r4, 4;
+    cvt.u64.u32 %rd6, %r5;
+    add.u64 %rd7, %rd1, %rd6;
+    st.global.f32 [%rd7], %f0;
+    ret;
+}

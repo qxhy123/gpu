@@ -29,3 +29,30 @@ def warp_timeline_figure(rec: Recorder, warp_id: int) -> go.Figure:
     fig.update_layout(barmode="stack", title=f"Warp {warp_id} timeline",
                       xaxis_title="cycle")
     return fig
+
+
+def l1_events_dataframe(rec) -> pd.DataFrame:
+    evs = rec.l1_accesses()
+    return pd.DataFrame([{"cycle":e.cycle, "warp_id":e.warp_id, "kind":e.kind,
+                          "line_addr":e.line_addr, "set_idx":e.set_idx,
+                          "way":e.way,
+                          "mshr_slot": e.mshr_slot if e.mshr_slot is not None else -1}
+                         for e in evs])
+
+
+def l2_events_dataframe(rec) -> pd.DataFrame:
+    evs = rec.l2_accesses()
+    return pd.DataFrame([{"cycle":e.cycle, "kind":e.kind,
+                          "line_addr":e.line_addr, "set_idx":e.set_idx,
+                          "way":e.way, "victim_addr":e.victim_addr}
+                         for e in evs])
+
+
+def hbm_events_dataframe(rec) -> pd.DataFrame:
+    evs = rec.hbm_accesses()
+    return pd.DataFrame([{"cycle":e.cycle, "served_at":e.served_at,
+                          "addr":e.addr, "channel":e.channel,
+                          "bank":e.bank, "row":e.row,
+                          "kind":e.kind, "row_kind":e.row_kind,
+                          "queue_wait":e.queue_wait}
+                         for e in evs])

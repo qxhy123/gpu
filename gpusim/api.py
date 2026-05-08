@@ -24,7 +24,13 @@ class Result:
     def summary(self) -> str:
         cyc = self.metrics.get("cycles", "?")
         bn = (self._occupancy or {}).get("bottleneck", "?")
-        return f"gpusim {self.mode}: {cyc} cycles, bottleneck={bn}"
+        cache_part = ""
+        if self._recorder is not None:
+            try:
+                cache_part = " | " + self.cache_summary()
+            except Exception:
+                pass
+        return f"gpusim {self.mode}: {cyc} cycles, bottleneck={bn}{cache_part}"
 
     @property
     def events_df(self):
@@ -36,6 +42,61 @@ class Result:
 
     def timeline(self, warp: int):
         return warp_timeline_figure(self._recorder, warp) if self._recorder else None
+
+    @property
+    def l1_events_df(self):
+        from gpusim.viz.notebook import l1_events_dataframe
+        return l1_events_dataframe(self._recorder) if self._recorder else None
+
+    @property
+    def l2_events_df(self):
+        from gpusim.viz.notebook import l2_events_dataframe
+        return l2_events_dataframe(self._recorder) if self._recorder else None
+
+    @property
+    def hbm_events_df(self):
+        from gpusim.viz.notebook import hbm_events_dataframe
+        return hbm_events_dataframe(self._recorder) if self._recorder else None
+
+    @property
+    def cache_metrics(self) -> dict:
+        if self._recorder is None:
+            return {}
+        from gpusim.analysis.metrics import (
+            l1_hit_rate, l2_hit_rate, mshr_merge_rate,
+            cache_hierarchy_breakdown,
+            channel_utilization, row_buffer_hit_rate, wb_traffic_fraction,
+        )
+        l1 = self.l1_events_df
+        l2 = self.l2_events_df
+        hbm = self.hbm_events_df
+        cycles = self.metrics.get("cycles", 1)
+        return {
+            "l1_hit_rate":     l1_hit_rate(l1)            if l1 is not None else 0.0,
+            "l2_hit_rate":     l2_hit_rate(l2)            if l2 is not None else 0.0,
+            "mshr_merge_rate": mshr_merge_rate(l1)        if l1 is not None else 0.0,
+            "hierarchy":       cache_hierarchy_breakdown(l1, l2) if l1 is not None else {},
+            "channel_util":    channel_utilization(hbm, cycles).tolist() if hbm is not None else [],
+            "row_buffer_hit_rate": row_buffer_hit_rate(hbm) if hbm is not None else 0.0,
+            "wb_traffic_fraction": wb_traffic_fraction(hbm) if hbm is not None else 0.0,
+        }
+
+    @property
+    def bandwidth_df(self):
+        from gpusim.analysis.metrics import bandwidth_per_channel
+        if self._recorder is None:
+            return None
+        return bandwidth_per_channel(self.hbm_events_df,
+                                       self.metrics.get("cycles", 1))
+
+    def cache_summary(self) -> str:
+        cm = self.cache_metrics
+        if not cm:
+            return "no recorder"
+        return (f"L1 hit {cm['l1_hit_rate']*100:.1f}% / "
+                f"L2 hit {cm['l2_hit_rate']*100:.1f}% / "
+                f"MSHR merge {cm['mshr_merge_rate']*100:.1f}% / "
+                f"row buffer hit {cm['row_buffer_hit_rate']*100:.1f}%")
 
     def html_report(self, path):
         if self._recorder is None:

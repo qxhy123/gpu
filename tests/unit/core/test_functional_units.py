@@ -28,3 +28,40 @@ def test_latency_lookup():
     assert s.result_latency("ld.shared.f32") == 20
     assert s.result_latency("st.global.f32") == 0
     assert s.result_latency("bra") == 1
+
+
+def test_fukind_has_tc():
+    from gpusim.core.functional_units import FUKind
+    assert FUKind.TC.value == "tc"
+
+
+def test_classify_mma_to_tc():
+    from gpusim.core.functional_units import FUSet, FUKind
+    from gpusim.config.schema import FUConfig
+    fus = FUSet(FUConfig())
+    assert fus.classify("mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32") is FUKind.TC
+    assert fus.classify("wgmma.mma_async.sync.aligned.m64n128k16.f32.f16.f16") is FUKind.TC
+
+
+def test_classify_cp_async_bulk_to_lsu():
+    from gpusim.core.functional_units import FUSet, FUKind
+    from gpusim.config.schema import FUConfig
+    fus = FUSet(FUConfig())
+    assert fus.classify("cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes") is FUKind.LSU
+
+
+def test_classify_mbarrier_to_sync():
+    from gpusim.core.functional_units import FUSet, FUKind
+    from gpusim.config.schema import FUConfig
+    fus = FUSet(FUConfig())
+    assert fus.classify("mbarrier.arrive.shared::cta") is FUKind.SYNC
+
+
+def test_tensor_core_config_default():
+    from gpusim.config.schema import SMConfig
+    cfg = SMConfig()
+    assert cfg.tensor_core.tc_mma_latency == 8
+    assert cfg.tensor_core.tc_mma_occupancy == 1
+    assert cfg.tensor_core.tc_wgmma_latency == 32
+    assert cfg.tensor_core.tc_wgmma_occupancy == 4
+    assert cfg.tensor_core.wgmma_queue_capacity == 16

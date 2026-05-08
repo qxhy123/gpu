@@ -44,3 +44,10 @@ hbm:
   row_size_bytes: 4096
   row_hit_latency: 10
   row_miss_latency: 30
+
+tensor_core:
+  tc_mma_latency: 8
+  tc_mma_occupancy: 1
+  tc_wgmma_latency: 32
+  tc_wgmma_occupancy: 4
+  wgmma_queue_capacity: 16

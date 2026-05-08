@@ -53,6 +53,15 @@ class HBMConfig:
 
 
 @dataclass
+class TensorCoreConfig:
+    tc_mma_latency: int = 8
+    tc_mma_occupancy: int = 1
+    tc_wgmma_latency: int = 32
+    tc_wgmma_occupancy: int = 4
+    wgmma_queue_capacity: int = 16
+
+
+@dataclass
 class SMConfig:
     sub_cores: int = 4
     warps_per_sm: int = 64
@@ -66,3 +75,4 @@ class SMConfig:
     fu: FUConfig = field(default_factory=FUConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)        # NEW
     hbm: HBMConfig = field(default_factory=HBMConfig)              # NEW
+    tensor_core: TensorCoreConfig = field(default_factory=TensorCoreConfig)

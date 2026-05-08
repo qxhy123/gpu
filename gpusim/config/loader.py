@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 import yaml
-from .schema import SMConfig, SchedulerConfig, RegFileConfig, FUConfig, CacheConfig, HBMConfig
+from .schema import SMConfig, SchedulerConfig, RegFileConfig, FUConfig, CacheConfig, HBMConfig, TensorCoreConfig
 
 _DEFAULT_PATH = Path(__file__).parent / "default_hopper.yaml"
 
@@ -12,9 +12,11 @@ def _from_dict(d: dict) -> SMConfig:
     fu = FUConfig(**(d.get("fu") or {}))
     cache = CacheConfig(**(d.get("cache") or {}))     # NEW
     hbm = HBMConfig(**(d.get("hbm") or {}))           # NEW
+    tensor_core = TensorCoreConfig(**(d.get("tensor_core") or {}))
     base = {k: v for k, v in d.items()
-            if k not in ("scheduler", "regfile", "fu", "cache", "hbm")}
-    return SMConfig(scheduler=sched, regfile=rf, fu=fu, cache=cache, hbm=hbm, **base)
+            if k not in ("scheduler", "regfile", "fu", "cache", "hbm", "tensor_core")}
+    return SMConfig(scheduler=sched, regfile=rf, fu=fu, cache=cache, hbm=hbm,
+                    tensor_core=tensor_core, **base)
 
 
 def load_default() -> SMConfig:

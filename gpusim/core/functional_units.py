@@ -9,6 +9,7 @@ class FUKind(Enum):
     LSU = "lsu"
     BRU = "bru"
     SYNC = "sync"
+    TC = "tc"
 
 
 class FUSet:
@@ -19,6 +20,17 @@ class FUSet:
         self._issue_free_at: dict[FUKind, int] = {k: 0 for k in FUKind}
 
     def classify(self, op: str) -> FUKind:
+        if op.startswith("mma.sync.") or op.startswith("wgmma.mma_async."):
+            return FUKind.TC
+        if op.startswith("wgmma."):
+            # wgmma.fence/commit_group/wait_group: TC stream-control, route to TC
+            return FUKind.TC
+        if op.startswith("cp.async.bulk."):
+            return FUKind.LSU
+        if op.startswith("mbarrier."):
+            return FUKind.SYNC
+        if op == "gpusim.tma_desc":
+            return FUKind.INT
         if op.startswith("ld.") or op.startswith("st.") or op.startswith("mov."):
             return FUKind.LSU
         if op == "bra" or op.endswith(".bra"):

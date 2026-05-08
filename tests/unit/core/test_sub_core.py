@@ -159,3 +159,45 @@ def test_subcore_emits_mshr_full_when_pool_saturated():
         if w.finished or (w.stack and w.stack.is_done()):
             break
     assert saw_mshr_full, "expected at least one MSHR_FULL stall"
+
+
+def test_subcore_issues_sync_mma_with_tc_latency():
+    """sync mma reserves TC FU and marks dst regs ready at now + tc_mma_latency."""
+    import numpy as np
+    from gpusim.config.schema import SMConfig
+    from gpusim.core.warp import Warp
+    from gpusim.core.sub_core import SubCore
+    from gpusim.core.exec import (
+        WarpFnState, GlobalMemory, SharedMemory, ParamSpace, InstrExecutor,
+    )
+    from gpusim.core.simt_stack import SIMTStack
+    from gpusim.frontend.parser import parse
+
+    src = """
+.entry test()
+{
+    .reg .f32 %d<4>;
+    .reg .f16 %a<8>;
+    .reg .f16 %b<4>;
+    .reg .f32 %c<4>;
+    mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32
+        {%d0, %d1, %d2, %d3},
+        {%a0, %a1, %a2, %a3, %a4, %a5, %a6, %a7},
+        {%b0, %b1, %b2, %b3},
+        {%c0, %c1, %c2, %c3};
+}
+"""
+    k = parse(src, "<test>")
+    cfg = SMConfig()
+    g = GlobalMemory(); s = SharedMemory()
+    p = ParamSpace({})
+    ex = InstrExecutor(kernel=k, gmem=g, smem=s, params=p, cta_id=0,
+                        ctaid=(0,0,0), nctaid=(1,1,1), ntid=(32,1,1))
+    fn = WarpFnState(warp_size=32, tids=tuple(range(32)))
+    w = Warp(warp_id=0, kernel=k, fn_state=fn,
+              stack=SIMTStack(warp_size=32, entry_pc=0), cta_id=0)
+    sc = SubCore(0, cfg, ex, [w])
+    sc.step(now=0)
+    # After issuing mma at cycle 0, dst reg %d0 should be ready at cycle 8 (tc_mma_latency)
+    assert w.scoreboard.has_pending("d0", now=4) is True
+    assert w.scoreboard.has_pending("d0", now=8) is False

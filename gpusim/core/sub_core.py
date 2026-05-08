@@ -6,7 +6,7 @@ from gpusim.core.scheduler import LRRScheduler, GTOScheduler
 from gpusim.core.functional_units import FUSet, FUKind
 from gpusim.core.simt_stack import SIMTStack
 from gpusim.core.exec import InstrExecutor
-from gpusim.frontend.ir import Instr, Reg
+from gpusim.frontend.ir import Instr, Reg, RegGroup
 
 
 def _make_scheduler(policy: str, n: int):
@@ -20,13 +20,21 @@ def _src_regs(instr: Instr) -> list[str]:
     for s in instr.src:
         if isinstance(s, Reg):
             out.append(s.name)
+        elif isinstance(s, RegGroup):
+            out.extend(r.name for r in s.regs)
     if instr.pred is not None:
         out.append(instr.pred.reg)
     return out
 
 
 def _dst_regs(instr: Instr) -> list[str]:
-    return [d.name for d in instr.dst if isinstance(d, Reg)]
+    out: list[str] = []
+    for d in instr.dst:
+        if isinstance(d, Reg):
+            out.append(d.name)
+        elif isinstance(d, RegGroup):
+            out.extend(r.name for r in d.regs)
+    return out
 
 
 @dataclass
@@ -41,6 +49,7 @@ class SubCore:
     def __post_init__(self):
         self.fus = FUSet(self.cfg.fu)
         self.scheduler = _make_scheduler(self.cfg.scheduler.policy, len(self.warps))
+        self.tc_cfg = self.cfg.tensor_core
         for w in self.warps:
             if w.stack is None:
                 w.stack = SIMTStack(warp_size=32, entry_pc=0)
@@ -134,8 +143,11 @@ class SubCore:
             info = coalescing_info(addrs, active_mask=w.fn_state.active_mask)
             gmem_n_tx = info.n_transactions
 
-        occ = self.fus.issue_occupancy(op, smem_conflict_degree=smem_conflict,
-                                       gmem_transactions=gmem_n_tx)
+        if op.startswith("mma.sync."):
+            occ = self.tc_cfg.tc_mma_occupancy
+        else:
+            occ = self.fus.issue_occupancy(op, smem_conflict_degree=smem_conflict,
+                                           gmem_transactions=gmem_n_tx)
         self.fus.reserve(kind, now, occ)
         self._issue(w, instr, now, smem_conflict=smem_conflict, gmem_n_tx=gmem_n_tx)
 
@@ -183,6 +195,28 @@ class SubCore:
             if w.stack.maybe_pop() and self.recorder is not None:
                 self.recorder.div_pop(cycle=now, warp_id=w.warp_id,
                                       pc=w.stack.top().pc if not w.stack.is_done() else -1)
+            return
+        if op.startswith("mma.sync."):
+            from gpusim.core.tensor_core.mma_spec import parse_mma_op
+            from gpusim.core.tensor_core.mma import execute_mma
+            spec = parse_mma_op(op)
+            assert spec is not None
+            w.fn_state.active_mask = w.stack.top().active_mask
+            w.fn_state.pc = w.stack.top().pc
+            dst = instr.dst[0]; a = instr.src[0]; b = instr.src[1]
+            c = instr.src[2] if len(instr.src) > 2 else dst
+            execute_mma(spec, w.fn_state, dst, a, b, c)
+            if self.recorder is not None:
+                self.recorder.instr_issue(
+                    cycle=now, warp_id=w.warp_id, pc=instr.pc, op=instr.op,
+                    src_loc=(instr.src_loc.file, instr.src_loc.line),
+                    active_mask=w.fn_state.active_mask,
+                )
+            latency = self.tc_cfg.tc_mma_latency
+            if isinstance(dst, RegGroup):
+                for r in dst.regs:
+                    w.scoreboard.mark_write(r.name, now + latency, origin="tc")
+            w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return
         # functional execution
         if self.recorder is not None:

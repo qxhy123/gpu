@@ -84,3 +84,27 @@ def mbarrier_events_dataframe(rec) -> pd.DataFrame:
     if not rec.mbarrier_events:
         return pd.DataFrame()
     return pd.DataFrame([asdict(e) for e in rec.mbarrier_events])
+
+
+def cta_dispatch_events_dataframe(rec):
+    import pandas as pd
+    from dataclasses import asdict
+    if not rec.cta_dispatch_events:
+        return pd.DataFrame()
+    return pd.DataFrame([asdict(e) for e in rec.cta_dispatch_events])
+
+
+def l2_mshr_events_dataframe(rec):
+    import pandas as pd
+    from dataclasses import asdict
+    if not rec.l2_mshr_events:
+        return pd.DataFrame()
+    return pd.DataFrame([asdict(e) for e in rec.l2_mshr_events])
+
+
+def bulk_store_events_dataframe(rec):
+    import pandas as pd
+    from dataclasses import asdict
+    if not rec.bulk_store_events:
+        return pd.DataFrame()
+    return pd.DataFrame([asdict(e) for e in rec.bulk_store_events])

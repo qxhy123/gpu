@@ -151,6 +151,58 @@ class Result:
                 f"MSHR merge {cm['mshr_merge_rate']*100:.1f}% / "
                 f"row buffer hit {cm['row_buffer_hit_rate']*100:.1f}%")
 
+    @property
+    def cta_dispatch_events_df(self):
+        from gpusim.viz.notebook import cta_dispatch_events_dataframe
+        return cta_dispatch_events_dataframe(self._recorder) if self._recorder else None
+
+    @property
+    def l2_mshr_events_df(self):
+        from gpusim.viz.notebook import l2_mshr_events_dataframe
+        return l2_mshr_events_dataframe(self._recorder) if self._recorder else None
+
+    @property
+    def bulk_store_events_df(self):
+        from gpusim.viz.notebook import bulk_store_events_dataframe
+        return bulk_store_events_dataframe(self._recorder) if self._recorder else None
+
+    @property
+    def device_metrics(self) -> dict:
+        if self._recorder is None:
+            return {}
+        from gpusim.analysis.metrics import (
+            per_sm_utilization, cta_to_sm_mapping, cta_dispatch_latency,
+            l2_cross_sm_hit_rate, l2_mshr_pressure, bulk_store_async_overlap_ratio,
+        )
+        cycles = self.metrics.get("cycles", 1)
+        warp_state = self.events_df
+        l2_events = self.l2_events_df
+        l2_mshr = self.l2_mshr_events_df
+        dispatch = self.cta_dispatch_events_df
+        bulk = self.bulk_store_events_df
+        if dispatch is not None and not dispatch.empty:
+            n_sm = int(dispatch["sm_id"].max()) + 1
+        else:
+            n_sm = 1
+        return {
+            "per_sm_utilization": per_sm_utilization(warp_state, cycles, n_sm).to_dict() if warp_state is not None else {},
+            "cta_to_sm_mapping": cta_to_sm_mapping(dispatch).to_dict() if dispatch is not None else {},
+            "l2_cross_sm_hit_rate": l2_cross_sm_hit_rate(l2_events) if l2_events is not None else 0.0,
+            "l2_mshr_pressure_peak": int(l2_mshr_pressure(l2_mshr, cycles).max()) if l2_mshr is not None and not l2_mshr.empty else 0,
+            "bulk_store_async_overlap": bulk_store_async_overlap_ratio(bulk, warp_state) if bulk is not None else 0.0,
+        }
+
+    def device_summary(self) -> str:
+        m = self.device_metrics
+        if not m:
+            return "no recorder"
+        rate = m.get("l2_cross_sm_hit_rate", 0)
+        peak = m.get("l2_mshr_pressure_peak", 0)
+        overlap = m.get("bulk_store_async_overlap", 0)
+        return (f"L2 cross-SM hit {rate*100:.1f}% / "
+                 f"L2 MSHR peak {peak} / "
+                 f"BulkStore overlap {overlap:.2f}")
+
     def html_report(self, path):
         if self._recorder is None:
             raise ValueError("no recorder; run in timing mode")

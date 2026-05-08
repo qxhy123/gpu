@@ -1,0 +1,281 @@
+// examples/tma_store_matmul/kernel.ptx
+// Production-pattern matmul: gmem→smem load (manual), wgmma compute,
+// smem→smem D writeback, TMA store smem→gmem via cp.async.bulk.
+//
+// M=64, N=128, K=16, fp16 A/B, fp32 D
+// Block: 128 threads (4 warps = 1 warp-group)
+//
+// Smem layout (offsets):
+//   smem_A:  0..2047      (64 rows × 16 cols × 2 bytes = 2048)
+//   smem_B:  2048..6143   (16 rows × 128 cols × 2 bytes = 4096)
+//   smem_D:  6144..38911  (64 rows × 128 cols × 4 bytes = 32768)
+//
+// D layout (per wgmma spec §4.2):
+//   warp w (0..3), lane i (0..31), reg j (0..63)
+//   D[w*16 + i/2][(i%2)*64 + j] = %d_j
+
+.visible .entry test(.param .u64 A, .param .u64 B, .param .u64 OUT)
+{
+    .reg .u64 %rd<20>;
+    .reg .u32 %r<16>;
+    .reg .f16 %h0;
+    .reg .f32 %d<64>;
+    .reg .pred %p0;
+
+    ld.param.u64 %rd0, [A];
+    ld.param.u64 %rd1, [B];
+    ld.param.u64 %rd2, [OUT];
+    mov.u32 %r0, %tid.x;                  // tid (0..127)
+
+    // === Copy A (64x16 fp16) from gmem to smem_A (offset 0) ===
+    // 128 threads × 8 fp16 = 1024 fp16 = 2048 bytes (covers all of A)
+    // Thread tid: elements [tid*8 .. tid*8+7], byte offset tid*16
+    mul.lo.u32 %r1, %r0, 16;              // r1 = tid * 16 (byte offset)
+    cvt.u64.u32 %rd3, %r1;                // rd3 = (u64)(tid*16)
+    add.u64 %rd4, %rd0, %rd3;             // rd4 = A_gmem + tid*16
+    // smem_A dst offset = rd3 (A starts at smem offset 0)
+
+    ld.global.f16 %h0, [%rd4];
+    st.shared.f16 [%rd3], %h0;
+    ld.global.f16 %h0, [%rd4 + 2];
+    st.shared.f16 [%rd3 + 2], %h0;
+    ld.global.f16 %h0, [%rd4 + 4];
+    st.shared.f16 [%rd3 + 4], %h0;
+    ld.global.f16 %h0, [%rd4 + 6];
+    st.shared.f16 [%rd3 + 6], %h0;
+    ld.global.f16 %h0, [%rd4 + 8];
+    st.shared.f16 [%rd3 + 8], %h0;
+    ld.global.f16 %h0, [%rd4 + 10];
+    st.shared.f16 [%rd3 + 10], %h0;
+    ld.global.f16 %h0, [%rd4 + 12];
+    st.shared.f16 [%rd3 + 12], %h0;
+    ld.global.f16 %h0, [%rd4 + 14];
+    st.shared.f16 [%rd3 + 14], %h0;
+
+    // === Copy B (16x128 fp16) from gmem to smem_B (offset 2048) ===
+    // 128 threads × 16 fp16 = 2048 fp16 = 4096 bytes (covers all of B)
+    // Thread tid: elements [tid*16 .. tid*16+15], byte offset tid*32
+    mul.lo.u32 %r2, %r0, 32;              // r2 = tid * 32
+    cvt.u64.u32 %rd6, %r2;                // rd6 = (u64)(tid*32)
+    add.u64 %rd7, %rd1, %rd6;             // rd7 = B_gmem + tid*32
+    add.u64 %rd8, %rd6, 2048;             // rd8 = smem_B offset = 2048 + tid*32
+
+    ld.global.f16 %h0, [%rd7];
+    st.shared.f16 [%rd8], %h0;
+    ld.global.f16 %h0, [%rd7 + 2];
+    st.shared.f16 [%rd8 + 2], %h0;
+    ld.global.f16 %h0, [%rd7 + 4];
+    st.shared.f16 [%rd8 + 4], %h0;
+    ld.global.f16 %h0, [%rd7 + 6];
+    st.shared.f16 [%rd8 + 6], %h0;
+    ld.global.f16 %h0, [%rd7 + 8];
+    st.shared.f16 [%rd8 + 8], %h0;
+    ld.global.f16 %h0, [%rd7 + 10];
+    st.shared.f16 [%rd8 + 10], %h0;
+    ld.global.f16 %h0, [%rd7 + 12];
+    st.shared.f16 [%rd8 + 12], %h0;
+    ld.global.f16 %h0, [%rd7 + 14];
+    st.shared.f16 [%rd8 + 14], %h0;
+    ld.global.f16 %h0, [%rd7 + 16];
+    st.shared.f16 [%rd8 + 16], %h0;
+    ld.global.f16 %h0, [%rd7 + 18];
+    st.shared.f16 [%rd8 + 18], %h0;
+    ld.global.f16 %h0, [%rd7 + 20];
+    st.shared.f16 [%rd8 + 20], %h0;
+    ld.global.f16 %h0, [%rd7 + 22];
+    st.shared.f16 [%rd8 + 22], %h0;
+    ld.global.f16 %h0, [%rd7 + 24];
+    st.shared.f16 [%rd8 + 24], %h0;
+    ld.global.f16 %h0, [%rd7 + 26];
+    st.shared.f16 [%rd8 + 26], %h0;
+    ld.global.f16 %h0, [%rd7 + 28];
+    st.shared.f16 [%rd8 + 28], %h0;
+    ld.global.f16 %h0, [%rd7 + 30];
+    st.shared.f16 [%rd8 + 30], %h0;
+
+    bar.sync 0;
+
+    // === wgmma descriptor registers (smem byte offsets) ===
+    mov.u64 %rd9, 0;                      // rd9 = smem_A byte offset (0)
+    mov.u64 %rd10, 2048;                  // rd10 = smem_B byte offset (2048)
+
+    // === Init D accumulator to 0 ===
+    mov.f32 %d0, 0.0;
+    mov.f32 %d1, 0.0;
+    mov.f32 %d2, 0.0;
+    mov.f32 %d3, 0.0;
+    mov.f32 %d4, 0.0;
+    mov.f32 %d5, 0.0;
+    mov.f32 %d6, 0.0;
+    mov.f32 %d7, 0.0;
+    mov.f32 %d8, 0.0;
+    mov.f32 %d9, 0.0;
+    mov.f32 %d10, 0.0;
+    mov.f32 %d11, 0.0;
+    mov.f32 %d12, 0.0;
+    mov.f32 %d13, 0.0;
+    mov.f32 %d14, 0.0;
+    mov.f32 %d15, 0.0;
+    mov.f32 %d16, 0.0;
+    mov.f32 %d17, 0.0;
+    mov.f32 %d18, 0.0;
+    mov.f32 %d19, 0.0;
+    mov.f32 %d20, 0.0;
+    mov.f32 %d21, 0.0;
+    mov.f32 %d22, 0.0;
+    mov.f32 %d23, 0.0;
+    mov.f32 %d24, 0.0;
+    mov.f32 %d25, 0.0;
+    mov.f32 %d26, 0.0;
+    mov.f32 %d27, 0.0;
+    mov.f32 %d28, 0.0;
+    mov.f32 %d29, 0.0;
+    mov.f32 %d30, 0.0;
+    mov.f32 %d31, 0.0;
+    mov.f32 %d32, 0.0;
+    mov.f32 %d33, 0.0;
+    mov.f32 %d34, 0.0;
+    mov.f32 %d35, 0.0;
+    mov.f32 %d36, 0.0;
+    mov.f32 %d37, 0.0;
+    mov.f32 %d38, 0.0;
+    mov.f32 %d39, 0.0;
+    mov.f32 %d40, 0.0;
+    mov.f32 %d41, 0.0;
+    mov.f32 %d42, 0.0;
+    mov.f32 %d43, 0.0;
+    mov.f32 %d44, 0.0;
+    mov.f32 %d45, 0.0;
+    mov.f32 %d46, 0.0;
+    mov.f32 %d47, 0.0;
+    mov.f32 %d48, 0.0;
+    mov.f32 %d49, 0.0;
+    mov.f32 %d50, 0.0;
+    mov.f32 %d51, 0.0;
+    mov.f32 %d52, 0.0;
+    mov.f32 %d53, 0.0;
+    mov.f32 %d54, 0.0;
+    mov.f32 %d55, 0.0;
+    mov.f32 %d56, 0.0;
+    mov.f32 %d57, 0.0;
+    mov.f32 %d58, 0.0;
+    mov.f32 %d59, 0.0;
+    mov.f32 %d60, 0.0;
+    mov.f32 %d61, 0.0;
+    mov.f32 %d62, 0.0;
+    mov.f32 %d63, 0.0;
+
+    wgmma.fence.sync.aligned;
+
+    wgmma.mma_async.sync.aligned.m64n128k16.f32.f16.f16
+        {%d0, %d1, %d2, %d3, %d4, %d5, %d6, %d7, %d8, %d9, %d10, %d11, %d12, %d13, %d14, %d15, %d16, %d17, %d18, %d19, %d20, %d21, %d22, %d23, %d24, %d25, %d26, %d27, %d28, %d29, %d30, %d31, %d32, %d33, %d34, %d35, %d36, %d37, %d38, %d39, %d40, %d41, %d42, %d43, %d44, %d45, %d46, %d47, %d48, %d49, %d50, %d51, %d52, %d53, %d54, %d55, %d56, %d57, %d58, %d59, %d60, %d61, %d62, %d63},
+        %rd9,
+        %rd10;
+
+    wgmma.commit_group.sync.aligned;
+    wgmma.wait_group.sync.aligned 0;
+
+    // === Write D registers to smem_D (offset 6144) ===
+    // Layout: warp w (0..3), lane i (0..31), reg j (0..63)
+    //   D[w*16 + i/2][(i%2)*64 + j] = %d_j
+    // smem_D[row * 128 + col_base + j] = %d_j  (row-major, fp32)
+    shr.u32 %r3, %r0, 5;                  // r3 = warp_w = tid / 32
+    and.b32 %r4, %r0, 31;                 // r4 = lane_i = tid % 32
+    shr.u32 %r5, %r4, 1;                  // r5 = lane_i / 2
+    shl.b32 %r6, %r3, 4;                  // r6 = warp_w * 16
+    add.u32 %r7, %r6, %r5;               // r7 = row = warp_w*16 + lane_i/2
+    and.b32 %r8, %r4, 1;                  // r8 = lane_i % 2
+    shl.b32 %r9, %r8, 6;                  // r9 = col_base = (lane_i%2) * 64
+    shl.b32 %r10, %r7, 7;                 // r10 = row * 128
+    add.u32 %r11, %r10, %r9;              // r11 = base_elem = row*128 + col_base
+    mul.lo.u32 %r12, %r11, 4;             // r12 = base_byte = base_elem * 4
+    add.u32 %r13, %r12, 6144;             // r13 = smem_D base byte (6144 + base_byte)
+    cvt.u64.u32 %rd11, %r13;              // rd11 = (u64)smem_D_ptr
+
+    // Store d0..d63 into smem_D (64 fp32 per thread = 256 bytes)
+    st.shared.f32 [%rd11], %d0;
+    st.shared.f32 [%rd11 + 4], %d1;
+    st.shared.f32 [%rd11 + 8], %d2;
+    st.shared.f32 [%rd11 + 12], %d3;
+    st.shared.f32 [%rd11 + 16], %d4;
+    st.shared.f32 [%rd11 + 20], %d5;
+    st.shared.f32 [%rd11 + 24], %d6;
+    st.shared.f32 [%rd11 + 28], %d7;
+    st.shared.f32 [%rd11 + 32], %d8;
+    st.shared.f32 [%rd11 + 36], %d9;
+    st.shared.f32 [%rd11 + 40], %d10;
+    st.shared.f32 [%rd11 + 44], %d11;
+    st.shared.f32 [%rd11 + 48], %d12;
+    st.shared.f32 [%rd11 + 52], %d13;
+    st.shared.f32 [%rd11 + 56], %d14;
+    st.shared.f32 [%rd11 + 60], %d15;
+    st.shared.f32 [%rd11 + 64], %d16;
+    st.shared.f32 [%rd11 + 68], %d17;
+    st.shared.f32 [%rd11 + 72], %d18;
+    st.shared.f32 [%rd11 + 76], %d19;
+    st.shared.f32 [%rd11 + 80], %d20;
+    st.shared.f32 [%rd11 + 84], %d21;
+    st.shared.f32 [%rd11 + 88], %d22;
+    st.shared.f32 [%rd11 + 92], %d23;
+    st.shared.f32 [%rd11 + 96], %d24;
+    st.shared.f32 [%rd11 + 100], %d25;
+    st.shared.f32 [%rd11 + 104], %d26;
+    st.shared.f32 [%rd11 + 108], %d27;
+    st.shared.f32 [%rd11 + 112], %d28;
+    st.shared.f32 [%rd11 + 116], %d29;
+    st.shared.f32 [%rd11 + 120], %d30;
+    st.shared.f32 [%rd11 + 124], %d31;
+    st.shared.f32 [%rd11 + 128], %d32;
+    st.shared.f32 [%rd11 + 132], %d33;
+    st.shared.f32 [%rd11 + 136], %d34;
+    st.shared.f32 [%rd11 + 140], %d35;
+    st.shared.f32 [%rd11 + 144], %d36;
+    st.shared.f32 [%rd11 + 148], %d37;
+    st.shared.f32 [%rd11 + 152], %d38;
+    st.shared.f32 [%rd11 + 156], %d39;
+    st.shared.f32 [%rd11 + 160], %d40;
+    st.shared.f32 [%rd11 + 164], %d41;
+    st.shared.f32 [%rd11 + 168], %d42;
+    st.shared.f32 [%rd11 + 172], %d43;
+    st.shared.f32 [%rd11 + 176], %d44;
+    st.shared.f32 [%rd11 + 180], %d45;
+    st.shared.f32 [%rd11 + 184], %d46;
+    st.shared.f32 [%rd11 + 188], %d47;
+    st.shared.f32 [%rd11 + 192], %d48;
+    st.shared.f32 [%rd11 + 196], %d49;
+    st.shared.f32 [%rd11 + 200], %d50;
+    st.shared.f32 [%rd11 + 204], %d51;
+    st.shared.f32 [%rd11 + 208], %d52;
+    st.shared.f32 [%rd11 + 212], %d53;
+    st.shared.f32 [%rd11 + 216], %d54;
+    st.shared.f32 [%rd11 + 220], %d55;
+    st.shared.f32 [%rd11 + 224], %d56;
+    st.shared.f32 [%rd11 + 228], %d57;
+    st.shared.f32 [%rd11 + 232], %d58;
+    st.shared.f32 [%rd11 + 236], %d59;
+    st.shared.f32 [%rd11 + 240], %d60;
+    st.shared.f32 [%rd11 + 244], %d61;
+    st.shared.f32 [%rd11 + 248], %d62;
+    st.shared.f32 [%rd11 + 252], %d63;
+
+    bar.sync 0;
+
+    // === Thread 0 only: TMA store smem_D → OUT ===
+    // Guard: only thread 0 (tid == 0) executes the TMA store.
+    // Other threads skip to END.
+    setp.ne.u32 %p0, %r0, 0;
+    @%p0 bra END;
+
+    // Create TMA descriptor for OUT (64 rows x 128 cols fp32, stride_y=128)
+    // dim_x=128, dim_y=64, stride_y=128, elem_bytes=4
+    gpusim.tma_desc %rd12, %rd2, 128, 64, 128, 4;
+
+    // Issue TMA store: copy smem_D (at offset 6144) to OUT via TMA
+    mov.u64 %rd13, 6144;
+    cp.async.bulk.tensor.2d.global.shared::cta [%rd12], [%rd13];
+    cp.async.bulk.commit_group;
+    cp.async.bulk.wait_group 0;
+
+END:
+    ret;
+}

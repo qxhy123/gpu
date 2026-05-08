@@ -73,6 +73,11 @@ SUPPORTED_KERNELS = [
     "smem_vs_l1_demo",       # both variants share the same schema
     "bw_saturation_demo",
     "row_buffer_demo",
+    # Phase 3 additions
+    "tc_matmul_precisions",
+    "mixed_accum",
+    "wgmma_basic",
+    "wgmma_async_pipeline",
 ]
 
 

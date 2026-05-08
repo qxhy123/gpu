@@ -52,3 +52,31 @@ def test_do_bulk_store_2d_copies_correct_bytes():
                           stride_y=32, elem_bytes=2)
     do_bulk_store_2d(gmem=g, smem=s, cta_id=0, smem_src=smem_src_off, desc=desc)
     assert (dest.reshape(64, 32) == src_arr).all()
+
+
+def test_bulk_store_end_to_end():
+    """Run a kernel that does TMA store + commit_group + wait_group 0."""
+    import numpy as np
+    import gpusim
+    src = """
+.entry test(.param .u64 OUT) {
+    .reg .u64 %rd<8>;
+    .reg .u32 %r<4>;
+    .reg .pred %p0;
+    ld.param.u64 %rd0, [OUT];
+    mov.u32 %r0, %tid.x;
+    setp.eq.u32 %p0, %r0, 0;
+    @!%p0 bra END;
+    gpusim.tma_desc %rd1, %rd0, 8, 8, 8, 4;
+    mov.u64 %rd2, 0;
+    cp.async.bulk.tensor.2d.global.shared::cta [%rd1], [%rd2];
+    cp.async.bulk.commit_group;
+    cp.async.bulk.wait_group 0;
+END:
+    ret;
+}
+"""
+    out = np.zeros(64, dtype=np.float32)
+    res = gpusim.run(ptx_src=src, grid=(1,1,1), block=(128,1,1),
+                      params={"OUT": out}, mode="timing")
+    assert 0 < res.metrics["cycles"] < 10_000

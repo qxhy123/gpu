@@ -42,6 +42,11 @@ def _make_queue(cfg):
     return WgmmaQueue(capacity=cfg.tensor_core.wgmma_queue_capacity)
 
 
+def _make_bulk_store_queue(capacity: int):
+    from gpusim.core.tma_store import BulkStoreQueue
+    return BulkStoreQueue(capacity=capacity)
+
+
 @dataclass
 class SubCore:
     sub_core_id: int
@@ -115,6 +120,33 @@ class SubCore:
             if q.must_wait(target_n):
                 return False, StallReason.WGMMA_WAIT
             return True, StallReason.ISSUED
+
+        if (instr.op.startswith("cp.async.bulk.tensor.")
+                and "global.shared" in instr.op):
+            # Store form: shared→global
+            if not hasattr(self, "bulk_store_queues") or self.bulk_store_queues is None:
+                self.bulk_store_queues = {}
+            cap = self.tc_cfg.bulk_store_queue_capacity
+            q = self.bulk_store_queues.setdefault(
+                w.warp_group_id, _make_bulk_store_queue(cap))
+            if len(q.in_flight) >= q.capacity:
+                return False, StallReason.BULK_STORE_QUEUE_FULL
+            w.bulk_store_pending_pc = pc
+            # Until all 4 warps arrive, this warp is not "ready" — use BARRIER state
+            return False, StallReason.BARRIER
+
+        if instr.op == "cp.async.bulk.wait_group":
+            if not hasattr(self, "bulk_store_queues") or self.bulk_store_queues is None:
+                return True, StallReason.ISSUED
+            q = self.bulk_store_queues.get(w.warp_group_id)
+            if q is None:
+                return True, StallReason.ISSUED
+            target_n = int(instr.src[0].value)
+            q.drain_completed_groups(now=now)
+            if q.must_wait(target_n):
+                return False, StallReason.BULK_STORE_WAIT
+            return True, StallReason.ISSUED
+
         for r in _src_regs(instr):
             if w.scoreboard.has_pending(r, now):
                 if w.scoreboard.origin_of(r) == "mem":
@@ -315,6 +347,46 @@ class SubCore:
                 )
             w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return
+
+        if op == "cp.async.bulk.commit_group":
+            if hasattr(self, "bulk_store_queues") and self.bulk_store_queues is not None:
+                cap = self.tc_cfg.bulk_store_queue_capacity
+                q = self.bulk_store_queues.setdefault(
+                    w.warp_group_id, _make_bulk_store_queue(cap))
+                gid = q.commit_group()
+                if self.recorder is not None:
+                    self.recorder.bulk_store(
+                        kind="COMMIT_GROUP", cycle=now,
+                        warp_group_id=w.warp_group_id,
+                        sm_id=getattr(self, "sm_id", -1),
+                        pc=instr.pc, commit_group_id=gid,
+                    )
+            if self.recorder is not None:
+                self.recorder.instr_issue(
+                    cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
+                    src_loc=(instr.src_loc.file, instr.src_loc.line),
+                    active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                )
+            w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
+            return
+
+        if op == "cp.async.bulk.wait_group":
+            target_n = int(instr.src[0].value)
+            if self.recorder is not None:
+                self.recorder.bulk_store(
+                    kind="WAIT_GROUP", cycle=now,
+                    warp_group_id=w.warp_group_id,
+                    sm_id=getattr(self, "sm_id", -1),
+                    pc=instr.pc, wait_n=target_n,
+                )
+                self.recorder.instr_issue(
+                    cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
+                    src_loc=(instr.src_loc.file, instr.src_loc.line),
+                    active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                )
+            w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
+            return
+
         if op == "gpusim.tma_desc":
             # Resolve gmem_base register from lane 0 (warp-uniform)
             gmem_base_reg = instr.src[0]

@@ -179,3 +179,7 @@ class Recorder:
             kind=kind, cycle=cycle, cta_id=cta_id, smem_addr=smem_addr,
             expected=expected, arrived=arrived, phase=phase, pred_result=pred_result,
         ))
+
+    def bulk_store(self, **kwargs):
+        # T27 will add storage. For now, no-op stub.
+        pass

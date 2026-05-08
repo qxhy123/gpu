@@ -91,6 +91,7 @@ class SM:
         from gpusim.core.tma import TensorDescriptorPool
         self._tma_descriptor_pool = TensorDescriptorPool()
         self._wgmma_queues = {}
+        self._bulk_store_queues = {}
         self._mbarrier_pools = {}
         from gpusim.core.sub_core import SubCore
         self._sub_cores = []
@@ -169,9 +170,13 @@ class SM:
 
         # warp-group wgmma sync coordination
         self._wgmma_coordinate(cycle)
+        self._bulk_store_coordinate(cycle)
 
         # wgmma queue drain
         for q in self._wgmma_queues.values():
+            q.drain_completed_groups(now=cycle)
+        # bulk store queue drain
+        for q in getattr(self, "_bulk_store_queues", {}).values():
             q.drain_completed_groups(now=cycle)
 
         # CTA retirement
@@ -264,6 +269,72 @@ class SM:
                         accum_dtype=spec.dtype_d.value,
                         completion_at=f.completion_at,
                     )
+
+    def _bulk_store_coordinate(self, cycle):
+        """Warp-group bulk-store coordination: issue when all 4 warps have pending store."""
+        from gpusim.core.tma_store import (
+            BulkStoreQueue, InflightBulkStore, do_bulk_store_2d,
+        )
+        if not hasattr(self, "_bulk_store_queues"):
+            self._bulk_store_queues = {}
+        # Share queue dict with sub_cores so they see the same queue objects.
+        # Always overwrite so sub_cores that created their own {} get merged.
+        for sc in self._sub_cores:
+            if (not hasattr(sc, "bulk_store_queues")
+                    or sc.bulk_store_queues is None
+                    or sc.bulk_store_queues is not self._bulk_store_queues):
+                # Merge any entries the sub_core created before we synced
+                if hasattr(sc, "bulk_store_queues") and sc.bulk_store_queues:
+                    self._bulk_store_queues.update(sc.bulk_store_queues)
+                sc.bulk_store_queues = self._bulk_store_queues
+        # Gather warps with a pending bulk-store PC
+        pending: list = [w for w in self._active_warps
+                         if not w.finished and w.bulk_store_pending_pc >= 0]
+        # Group by (warp_group_id, pc) so we handle each unique store once
+        by_wg_pc: dict = {}
+        for w in pending:
+            key = (w.warp_group_id, w.bulk_store_pending_pc)
+            by_wg_pc.setdefault(key, []).append(w)
+        for (wg_id, pc), ws in by_wg_pc.items():
+            instr = ws[0].kernel.instrs[pc]
+            desc_reg = instr.src[0]
+            smem_src_reg = instr.src[1]
+            handle = ws[0].fn_state.threads[0].get_u64(desc_reg.name)
+            smem_src = ws[0].fn_state.threads[0].get_u64(smem_src_reg.name)
+            desc = self._tma_descriptor_pool.lookup(handle)
+            tx_bytes = do_bulk_store_2d(
+                gmem=self._gmem, smem=self._smem,
+                cta_id=ws[0].cta_id, smem_src=smem_src, desc=desc,
+            )
+            n_lines = (tx_bytes + 127) // 128
+            latency_per_line = self.cfg.tensor_core.bulk_store_latency_per_line
+            latency = max(8, n_lines * latency_per_line)
+            completion_at = cycle + latency
+            cap = self.cfg.tensor_core.bulk_store_queue_capacity
+            q = self._bulk_store_queues.setdefault(
+                wg_id, BulkStoreQueue(capacity=cap))
+            f = InflightBulkStore(
+                issued_at=cycle, completion_at=completion_at,
+                bytes_total=tx_bytes,
+            )
+            q.try_push(f)
+            for w in ws:
+                w.stack.update_top_pc(pc + 1); w.stack.maybe_pop()
+                w.bulk_store_pending_pc = -1
+            if self.recorder is not None:
+                self.recorder.instr_issue(
+                    cycle=cycle, warp_id=ws[0].warp_id,
+                    pc=pc, op=instr.op,
+                    src_loc=(instr.src_loc.file, instr.src_loc.line),
+                    active_mask=ws[0].fn_state.active_mask,
+                )
+                self.recorder.bulk_store(
+                    kind="ISSUE", cycle=cycle,
+                    warp_group_id=wg_id, sm_id=self.sm_id, pc=pc,
+                    smem_src=smem_src, gmem_base=desc.gmem_base,
+                    bytes_total=tx_bytes,
+                    completion_at=completion_at,
+                )
 
     def run(self, kernel, grid, block, params, regs_per_thread: int = 16,
              smem_per_cta: int = 0) -> SMRunResult:

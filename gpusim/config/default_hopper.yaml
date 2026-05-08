@@ -25,3 +25,22 @@ fu:
   smem_latency: 20
   gmem_latency: 400
   lsu_outstanding: 16
+
+cache:
+  l1_size_bytes: 131072
+  l1_ways: 4
+  l1_line_bytes: 128
+  l1_hit_latency: 25
+  l1_miss_check_latency: 5
+  mshr_slots: 16
+  l2_size_bytes: 4194304
+  l2_ways: 16
+  l2_hit_latency: 200
+  l2_miss_install_latency: 10
+
+hbm:
+  channels: 8
+  banks_per_channel: 16
+  row_size_bytes: 4096
+  row_hit_latency: 10
+  row_miss_latency: 30

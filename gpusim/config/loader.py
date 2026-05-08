@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 import yaml
-from .schema import SMConfig, SchedulerConfig, RegFileConfig, FUConfig
+from .schema import SMConfig, SchedulerConfig, RegFileConfig, FUConfig, CacheConfig, HBMConfig
 
 _DEFAULT_PATH = Path(__file__).parent / "default_hopper.yaml"
 
@@ -10,8 +10,11 @@ def _from_dict(d: dict) -> SMConfig:
     sched = SchedulerConfig(**(d.get("scheduler") or {}))
     rf = RegFileConfig(**(d.get("regfile") or {}))
     fu = FUConfig(**(d.get("fu") or {}))
-    base = {k: v for k, v in d.items() if k not in ("scheduler","regfile","fu")}
-    return SMConfig(scheduler=sched, regfile=rf, fu=fu, **base)
+    cache = CacheConfig(**(d.get("cache") or {}))     # NEW
+    hbm = HBMConfig(**(d.get("hbm") or {}))           # NEW
+    base = {k: v for k, v in d.items()
+            if k not in ("scheduler", "regfile", "fu", "cache", "hbm")}
+    return SMConfig(scheduler=sched, regfile=rf, fu=fu, cache=cache, hbm=hbm, **base)
 
 
 def load_default() -> SMConfig:

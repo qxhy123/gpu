@@ -29,6 +29,29 @@ class FUConfig:
 
 
 @dataclass
+class CacheConfig:
+    l1_size_bytes: int = 131072        # 128 KB
+    l1_ways: int = 4
+    l1_line_bytes: int = 128
+    l1_hit_latency: int = 25
+    l1_miss_check_latency: int = 5
+    mshr_slots: int = 16
+    l2_size_bytes: int = 4 * 1024 * 1024   # 4 MB
+    l2_ways: int = 16
+    l2_hit_latency: int = 200
+    l2_miss_install_latency: int = 10
+
+
+@dataclass
+class HBMConfig:
+    channels: int = 8
+    banks_per_channel: int = 16
+    row_size_bytes: int = 4096
+    row_hit_latency: int = 10
+    row_miss_latency: int = 30
+
+
+@dataclass
 class SMConfig:
     sub_cores: int = 4
     warps_per_sm: int = 64
@@ -40,3 +63,5 @@ class SMConfig:
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     regfile: RegFileConfig = field(default_factory=RegFileConfig)
     fu: FUConfig = field(default_factory=FUConfig)
+    cache: CacheConfig = field(default_factory=CacheConfig)        # NEW
+    hbm: HBMConfig = field(default_factory=HBMConfig)              # NEW

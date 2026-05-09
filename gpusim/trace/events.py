@@ -272,6 +272,14 @@ class KernelLaunch:
     n_ctas: int
 
 
+@dataclass(frozen=True)
+class StreamEvent:
+    cycle: int
+    event_id: int
+    stream_id: int
+    op: str               # "record" | "wait_start" | "wait_satisfied"
+
+
 # Canonical short aliases for Phase 7 stream_id API
 InstrIssue = InstrIssueEvent
 MemoryAccess = GmemEvent

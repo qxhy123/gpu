@@ -282,6 +282,28 @@ class StreamEvent:
     op: str               # "record" | "wait_start" | "wait_satisfied"
 
 
+@dataclass(frozen=True)
+class NvlinkTransfer:
+    src_gpu: int
+    dst_gpu: int
+    n_bytes: int
+    start_cycle: int
+    end_cycle: int
+    rank: int = -1
+    op_name: str = ""
+
+
+@dataclass(frozen=True)
+class CollectiveOp:
+    op_name: str
+    algorithm: str
+    n_bytes: int
+    world_size: int
+    start_cycle: int
+    end_cycle: int
+    n_steps: int
+
+
 # Canonical short aliases for Phase 7 stream_id API
 InstrIssue = InstrIssueEvent
 MemoryAccess = GmemEvent

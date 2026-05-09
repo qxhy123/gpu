@@ -196,6 +196,12 @@ def write_parquet(rec: Recorder, out: str | Path) -> None:
     if rec.stream_event_events:
         pd.DataFrame([asdict(e) for e in rec.stream_event_events]).to_parquet(
             out / "stream_event.parquet", index=False)
+    if rec.nvlink_transfer_events:
+        pd.DataFrame([asdict(e) for e in rec.nvlink_transfer_events]).to_parquet(
+            out / "nvlink_transfer.parquet", index=False)
+    if rec.collective_events:
+        pd.DataFrame([asdict(e) for e in rec.collective_events]).to_parquet(
+            out / "collective.parquet", index=False)
 
 
 # write_all is the canonical name used by Phase 3 callers; delegates to write_parquet

@@ -36,6 +36,8 @@ class Recorder:
         self.atomic_events: list = []
         self.kernel_launch_events: list = []
         self.stream_event_events: list = []
+        self.nvlink_transfer_events: list = []
+        self.collective_events: list = []
 
     def warp_state(self, *, cycle: int, warp_id: int, state: str, pc: int) -> None:
         cur = self._cur_state.get(warp_id)
@@ -268,6 +270,26 @@ class Recorder:
         from gpusim.trace.events import StreamEvent
         self.stream_event_events.append(StreamEvent(
             cycle=cycle, event_id=event_id, stream_id=stream_id, op=op,
+        ))
+
+    def nvlink_transfer(self, *, src_gpu: int, dst_gpu: int, n_bytes: int,
+                          start_cycle: int, end_cycle: int,
+                          rank: int = -1, op_name: str = "") -> None:
+        from gpusim.trace.events import NvlinkTransfer
+        self.nvlink_transfer_events.append(NvlinkTransfer(
+            src_gpu=src_gpu, dst_gpu=dst_gpu, n_bytes=n_bytes,
+            start_cycle=start_cycle, end_cycle=end_cycle,
+            rank=rank, op_name=op_name,
+        ))
+
+    def collective(self, *, op_name: str, algorithm: str, n_bytes: int,
+                     world_size: int, start_cycle: int, end_cycle: int,
+                     n_steps: int) -> None:
+        from gpusim.trace.events import CollectiveOp
+        self.collective_events.append(CollectiveOp(
+            op_name=op_name, algorithm=algorithm, n_bytes=n_bytes,
+            world_size=world_size, start_cycle=start_cycle, end_cycle=end_cycle,
+            n_steps=n_steps,
         ))
 
     def kernel_launch(self, *, stream_id: int, kernel_name: str,

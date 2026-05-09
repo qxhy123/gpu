@@ -144,6 +144,16 @@
 {{ combined_overlap_html | safe }}
 {% endif %}
 
+{% if collective_timeline_html %}
+<h2>§33 Collective op timeline</h2>
+{{ collective_timeline_html | safe }}
+{% endif %}
+
+{% if nvlink_heatmap_html %}
+<h2>§34 NVLink fabric utilization heatmap</h2>
+{{ nvlink_heatmap_html | safe }}
+{% endif %}
+
 <script>
 Plotly.newPlot("stall_pie", {{ stall_pie_json|safe }}, {});
 Plotly.newPlot("ipc_line", {{ ipc_line_json|safe }}, {});

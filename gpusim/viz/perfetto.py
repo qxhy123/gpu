@@ -221,6 +221,31 @@ def build_perfetto(rec: Recorder) -> dict:
                 "pid": f"Stream-{ev.stream_id}", "tid": "events",
             })
 
+    # Phase 10: NVLink transfers
+    for ev in getattr(rec, "nvlink_transfer_events", []):
+        events.append({
+            "name": f"{ev.src_gpu}→{ev.dst_gpu} ({ev.n_bytes}B)",
+            "cat": "nvlink", "ph": "X",
+            "ts": ev.start_cycle,
+            "dur": max(1, ev.end_cycle - ev.start_cycle),
+            "pid": "NVLink",
+            "tid": f"{ev.src_gpu}→{ev.dst_gpu}",
+            "args": {"src_gpu": ev.src_gpu, "dst_gpu": ev.dst_gpu,
+                     "n_bytes": ev.n_bytes, "rank": ev.rank, "op": ev.op_name},
+        })
+    # Phase 10: collective ops
+    for ev in getattr(rec, "collective_events", []):
+        events.append({
+            "name": f"{ev.op_name}.{ev.algorithm}",
+            "cat": "collective", "ph": "X",
+            "ts": ev.start_cycle,
+            "dur": max(1, ev.end_cycle - ev.start_cycle),
+            "pid": "Collective", "tid": ev.algorithm,
+            "args": {"op": ev.op_name, "algo": ev.algorithm,
+                     "n_bytes": ev.n_bytes, "world_size": ev.world_size,
+                     "n_steps": ev.n_steps},
+        })
+
     return {"traceEvents": events, "displayTimeUnit": "ns"}
 
 

@@ -216,6 +216,8 @@ def build_html(rec: Recorder, *, kernel_name: str, grid, block,
         event_timeline_html=_render_event_timeline(rec),
         l2_window_heatmap_html=_render_l2_window_heatmap(rec),
         combined_overlap_html=_render_combined_overlap(rec),
+        collective_timeline_html=_render_collective_timeline(rec),
+        nvlink_heatmap_html=_render_nvlink_heatmap(rec),
     )
 
 
@@ -337,6 +339,23 @@ def _render_per_stream_breakdown(rec):
     if not rows:
         return ""
     return "<h3>Per-stream event breakdown</h3>" + pd.DataFrame(rows).to_html(index=False)
+
+
+def _render_collective_timeline(rec):
+    if not getattr(rec, "collective_events", None): return ""
+    from dataclasses import asdict
+    import pandas as pd
+    df = pd.DataFrame([asdict(e) for e in rec.collective_events])
+    return "<h3>Collective ops</h3>" + df.to_html(index=False)
+
+
+def _render_nvlink_heatmap(rec):
+    if not getattr(rec, "nvlink_transfer_events", None): return ""
+    from dataclasses import asdict
+    import pandas as pd
+    df = pd.DataFrame([asdict(e) for e in rec.nvlink_transfer_events])
+    pivot = df.groupby(["src_gpu", "dst_gpu"])["n_bytes"].sum().reset_index()
+    return "<h3>NVLink fabric utilization</h3>" + pivot.to_html(index=False)
 
 
 def _render_combined_overlap(rec):

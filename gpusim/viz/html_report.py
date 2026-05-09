@@ -210,6 +210,8 @@ def build_html(rec: Recorder, *, kernel_name: str, grid, block,
         dsmem_traffic_html=_render_dsmem_traffic(rec),
         atomic_contention_html=_render_atomic_contention(rec),
         cooperative_epilogue_html=_render_cooperative_epilogue(rec),
+        stream_concurrency_html=_render_stream_concurrency(rec),
+        per_stream_breakdown_html=_render_per_stream_breakdown(rec),
     )
 
 
@@ -266,6 +268,47 @@ def _render_cooperative_epilogue(rec):
     import pandas as pd
     df = pd.DataFrame([asdict(e) for e in rec.bulk_store_events])
     return "<h3>Cooperative epilogue (bulk store events)</h3>" + df.to_html(index=False)
+
+
+def _render_stream_concurrency(rec):
+    if not getattr(rec, "kernel_launch_events", None):
+        return ""
+    from dataclasses import asdict
+    import pandas as pd
+    df = pd.DataFrame([asdict(e) for e in rec.kernel_launch_events])
+    parts = []
+    parts.append("<h3>Kernel launches by stream</h3>" + df.to_html(index=False))
+    return "\n".join(parts)
+
+
+def _render_per_stream_breakdown(rec):
+    if not getattr(rec, "kernel_launch_events", None):
+        return ""
+    import pandas as pd
+    rows = []
+    streams = set()
+    for ev_attr in ["instr_events", "atomic_events", "mma_events",
+                     "bulk_load_events", "bulk_store_events"]:
+        for e in getattr(rec, ev_attr, []) or []:
+            sid = getattr(e, "stream_id", 0)
+            streams.add(sid)
+    if not streams:
+        return ""
+    for sid in sorted(streams):
+        rows.append({
+            "stream_id": sid,
+            "instr_events": sum(1 for e in (getattr(rec, "instr_events", []) or [])
+                                  if getattr(e, "stream_id", 0) == sid),
+            "atomic_events": sum(1 for e in (getattr(rec, "atomic_events", []) or [])
+                                   if getattr(e, "stream_id", 0) == sid),
+            "memory_events": sum(1 for e in (getattr(rec, "instr_events", []) or [])
+                                   if getattr(e, "stream_id", 0) == sid
+                                   and ("ld" in getattr(e, "op", "")
+                                        or "st" in getattr(e, "op", ""))),
+        })
+    if not rows:
+        return ""
+    return "<h3>Per-stream event breakdown</h3>" + pd.DataFrame(rows).to_html(index=False)
 
 
 def save_html(rec: Recorder, path: str | Path, **kwargs) -> None:

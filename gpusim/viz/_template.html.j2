@@ -114,6 +114,16 @@
 {{ cooperative_epilogue_html | safe }}
 {% endif %}
 
+{% if stream_concurrency_html %}
+<h2>§27 Stream concurrency timeline</h2>
+{{ stream_concurrency_html | safe }}
+{% endif %}
+
+{% if per_stream_breakdown_html %}
+<h2>§28 Per-stream resource breakdown</h2>
+{{ per_stream_breakdown_html | safe }}
+{% endif %}
+
 <script>
 Plotly.newPlot("stall_pie", {{ stall_pie_json|safe }}, {});
 Plotly.newPlot("ipc_line", {{ ipc_line_json|safe }}, {});

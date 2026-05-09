@@ -163,6 +163,11 @@ class GlobalMemory:
             new = self._apply_op_f32(op, old, val)
             self.store_f32(addr, new)
             return old
+        if ty is PtxType.s32:
+            old = self.load_s32(addr)
+            new = self._apply_op_int(op, old, val)
+            self.store_s32(addr, int(new))
+            return old
         old = self.load_u32(addr)
         new = self._apply_op_int(op, old, val)
         self.store_u32(addr, new)

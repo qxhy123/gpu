@@ -1,0 +1,27 @@
+.entry test(.param .u64 IN, .param .u64 OUT)
+{
+    .reg .u64 %rd<8>;
+    .reg .u32 %r<8>;
+    .reg .s32 %s<4>;
+
+    ld.param.u64 %rd0, [IN];
+    ld.param.u64 %rd1, [OUT];
+
+    mov.u32 %r0, %tid.x;
+    mov.u32 %r1, %ctaid.x;
+    mov.u32 %r2, %ntid.x;
+    mul.lo.s32 %r3, %r1, %r2;
+    add.s32 %r3, %r3, %r0;     // global tid
+    mul.lo.s32 %r4, %r3, 4;
+    cvt.u64.u32 %rd2, %r4;
+    add.u64 %rd3, %rd0, %rd2;
+    ld.global.s32 %s0, [%rd3];
+
+    // OUT[0] = min, OUT[1] = max
+    add.u64 %rd4, %rd1, 4;
+
+    red.global.min.s32 [%rd1], %s0;
+    red.global.max.s32 [%rd4], %s0;
+
+    ret;
+}

@@ -13,8 +13,9 @@ class DeviceRunResult:
 
 
 class Device:
-    def __init__(self, cfg: DeviceConfig, recorder=None):
+    def __init__(self, cfg: DeviceConfig, gpu_id: int = 0, recorder=None):
         self.cfg = cfg
+        self.gpu_id = gpu_id    # NEW Phase 10
         self.n_sm = cfg.n_sm
         self.recorder = recorder
 
@@ -260,3 +261,6 @@ class Device:
             _recorder=getattr(self, "recorder", None),
             _stream_refs=list(streams),     # NEW
         )
+
+
+GPU = Device   # Phase 10 forward-compat alias

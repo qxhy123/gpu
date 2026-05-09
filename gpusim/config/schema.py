@@ -89,10 +89,20 @@ class CtaSchedulerConfig:
 
 
 @dataclass
+class NvlinkConfig:
+    bandwidth_gbps: float = 900.0
+    latency_cycles: int = 100
+    topology: str = "all_to_all"
+    half_duplex: bool = True
+
+
+@dataclass
 class DeviceConfig:
     n_sm: int = 8
     cluster_size: int = 1                # NEW (Phase 5)
+    n_gpus: int = 1                      # NEW Phase 10
     sm: SMConfig = field(default_factory=SMConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     hbm: HBMConfig = field(default_factory=HBMConfig)
     scheduler: CtaSchedulerConfig = field(default_factory=CtaSchedulerConfig)
+    nvlink: NvlinkConfig = field(default_factory=NvlinkConfig)  # NEW Phase 10

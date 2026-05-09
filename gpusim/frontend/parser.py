@@ -272,6 +272,32 @@ class _Parser:
         if op.startswith("membar"):
             return [], []
 
+        if op.startswith("atom.global.") or op.startswith("atom.shared."):
+            # atom.<space>.<op>.<ty>  dst, [addr], val  (or val_cmp, val_swap for cas)
+            is_cas = ".cas." in op
+            ty = self._type_from_op(op) or PtxType.u32
+            dst = self._parse_operand(ty)
+            self.eat("COMMA")
+            self.eat("LBRACK")
+            addr = self._parse_operand(PtxType.u64)
+            self.eat("RBRACK")
+            self.eat("COMMA")
+            atom_srcs: list = [addr, self._parse_operand(ty)]
+            if is_cas:
+                self.eat("COMMA")
+                atom_srcs.append(self._parse_operand(ty))
+            return [dst], atom_srcs
+
+        if op.startswith("red.global.") or op.startswith("red.shared."):
+            # red.<space>.<op>.<ty>  [addr], val  (no dst)
+            ty = self._type_from_op(op) or PtxType.u32
+            self.eat("LBRACK")
+            addr = self._parse_operand(PtxType.u64)
+            self.eat("RBRACK")
+            self.eat("COMMA")
+            val = self._parse_operand(ty)
+            return [], [addr, val]
+
         if op.startswith("ld."):
             # ld.<space>.<ty> dst, [addr];
             dst = self._parse_operand(ty or PtxType.b32)

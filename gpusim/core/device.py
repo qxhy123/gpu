@@ -188,6 +188,12 @@ class Device:
                     )
                     results_per_stream[s.stream_id].append(result)
                     sched.mark_grid_retired(s)
+                    # Phase 8 M3: signal pending record markers in this stream
+                    if hasattr(s, "_pending_record_markers") and s._pending_record_markers:
+                        end_cycle = result.metrics.get("cycles", 0)
+                        for marker in s._pending_record_markers:
+                            marker.event.signaled_at_cycle = end_cycle
+                        s._pending_record_markers = []
 
         total_cycles = max((r.metrics.get("cycles", 0)
                               for results in results_per_stream.values()

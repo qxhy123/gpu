@@ -146,12 +146,22 @@ class ConcurrentStreamScheduler:
         return False
 
     def _ensure_inflight(self, s) -> bool:
-        if s.inflight is None and s.pending:
+        from gpusim.api import _RecordMarker
+        while s.inflight is None and s.pending:
             head = s.pending.popleft()
-            # Phase 8 M3 will add _RecordMarker handling; for now treat all as GridLaunch
+            if isinstance(head, _RecordMarker):
+                # Process record marker: associate event with this stream
+                head.event.recorded_in_stream = s
+                # Track for later signaling
+                if not hasattr(s, "_pending_record_markers"):
+                    s._pending_record_markers = []
+                s._pending_record_markers.append(head)
+                continue   # try next pending item
+            # Real GridLaunch
             s.inflight = head
             self._cta_iters[s.stream_id] = _CtaIter(head.grid)
             s.in_flight_ctas = head.grid[0] * head.grid[1] * head.grid[2]
+            return True
         return s.inflight is not None
 
     def _pick_sm(self, available_sms, cta):

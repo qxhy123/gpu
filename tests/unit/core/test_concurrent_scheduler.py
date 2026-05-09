@@ -77,3 +77,47 @@ def test_concurrent_run_streams_two_streams_both_complete():
     assert 0 in multi_res.streams and 1 in multi_res.streams
     assert multi_res.streams[0][0].stream_id == 0
     assert multi_res.streams[1][0].stream_id == 1
+
+
+def test_event_blocks_consumer_stream_until_signaled():
+    """Stream waiting on unsignaled event is skipped."""
+    from gpusim.api import Stream, Event, _reset_stream_id_counter, _reset_event_id_counter
+    from gpusim.core.scheduler import ConcurrentStreamScheduler
+    _reset_stream_id_counter(); _reset_event_id_counter()
+    s_a = Stream()
+    s_b = Stream()
+    ev = Event()
+
+    s_a.launch(ptx_src="x", grid=(2,1,1), block=(32,1,1), params={}, kernel_name="ka")
+    s_b.wait(ev)
+    s_b.launch(ptx_src="x", grid=(2,1,1), block=(32,1,1), params={}, kernel_name="kb")
+
+    sched = ConcurrentStreamScheduler([s_a, s_b])
+    class _SM:
+        def __init__(self): self.cap = 100
+    sms = [_SM()] * 8
+
+    decisions = sched.step(sms, current_cycle=0)
+    stream_ids = {d[0].stream_id for d in decisions}
+    assert s_a.stream_id in stream_ids
+    assert s_b.stream_id not in stream_ids
+
+
+def test_record_marker_processed_in_scheduler():
+    """A _RecordMarker at head of pending is processed (event.recorded_in_stream set)."""
+    from gpusim.api import Stream, Event, _RecordMarker, _reset_stream_id_counter, _reset_event_id_counter
+    from gpusim.core.scheduler import ConcurrentStreamScheduler
+    _reset_stream_id_counter(); _reset_event_id_counter()
+    s = Stream()
+    ev = Event()
+    s.record(ev)   # _RecordMarker first
+    s.launch(ptx_src="x", grid=(1,1,1), block=(32,1,1), params={}, kernel_name="k")
+
+    sched = ConcurrentStreamScheduler([s])
+    class _SM:
+        def __init__(self): self.cap = 100
+    sms = [_SM()]
+
+    sched.step(sms, current_cycle=0)
+    # After scheduler processes _RecordMarker, event.recorded_in_stream should be set
+    assert ev.recorded_in_stream is s

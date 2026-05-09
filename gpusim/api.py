@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -336,3 +337,48 @@ def run(*, ptx_src: str | None = None, ptx_path: str | Path | None = None,
             _occupancy=res.occupancy,
         )
     raise NotImplementedError(f"mode={mode!r} not implemented yet")
+
+
+_STREAM_ID_COUNTER = 0
+
+
+def _next_stream_id() -> int:
+    global _STREAM_ID_COUNTER
+    sid = _STREAM_ID_COUNTER
+    _STREAM_ID_COUNTER += 1
+    return sid
+
+
+def _reset_stream_id_counter() -> None:
+    """Test-only helper to reset the global stream id counter."""
+    global _STREAM_ID_COUNTER
+    _STREAM_ID_COUNTER = 0
+
+
+@dataclass
+class GridLaunch:
+    ptx_src: str
+    kernel_name: str
+    grid: tuple
+    block: tuple
+    params: dict
+    config: object | None = None    # type: Config; lazy-typed to avoid circular
+
+
+@dataclass
+class Stream:
+    stream_id: int = field(default_factory=_next_stream_id)
+    pending: "deque[GridLaunch]" = field(default_factory=deque)
+    inflight: GridLaunch | None = None
+    completed: list = field(default_factory=list)
+
+    def launch(self, ptx_src: str, grid: tuple, block: tuple,
+               params: dict, *, kernel_name: str = "<unnamed>",
+               config=None) -> None:
+        self.pending.append(GridLaunch(
+            ptx_src=ptx_src, kernel_name=kernel_name,
+            grid=grid, block=block, params=params, config=config,
+        ))
+
+    def is_idle(self) -> bool:
+        return self.inflight is None and not self.pending

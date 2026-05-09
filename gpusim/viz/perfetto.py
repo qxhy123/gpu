@@ -172,6 +172,23 @@ def build_perfetto(rec: Recorder) -> dict:
                      "queue_depth_before": ev.queue_depth_before},
         })
 
+    # Phase 7 stream swimlanes — one per kernel_launch event
+    for ev in getattr(rec, "kernel_launch_events", []):
+        events.append({
+            "name": ev.kernel_name,
+            "cat": "kernel_launch", "ph": "X",
+            "ts": ev.launch_cycle,
+            "dur": max(1, ev.complete_cycle - ev.launch_cycle),
+            "pid": f"Stream-{ev.stream_id}",
+            "tid": "kernel",
+            "args": {
+                "stream_id": ev.stream_id,
+                "n_ctas": ev.n_ctas,
+                "grid": list(ev.grid),
+                "block": list(ev.block),
+            },
+        })
+
     return {"traceEvents": events, "displayTimeUnit": "ns"}
 
 

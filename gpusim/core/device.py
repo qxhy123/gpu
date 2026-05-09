@@ -143,6 +143,13 @@ class Device:
             occupancy={"active_ctas": occ.active_ctas, "bottleneck": occ.bottleneck},
         )
 
+    def _on_cta_retired(self, stream_id: int) -> None:
+        """Called by main loop when an SM completes a CTA. Phase 9."""
+        for s in getattr(self, "_active_streams", []):
+            if s.stream_id == stream_id:
+                s.in_flight_ctas = max(0, s.in_flight_ctas - 1)
+                return
+
     def _available_sms(self) -> list:
         """SMs with capacity for at least one more CTA. Phase 9."""
         out = []
@@ -224,6 +231,7 @@ class Device:
                     )
                     results_per_stream[s.stream_id].append(result)
                     sched.mark_grid_retired(s)
+                    s.in_flight_ctas = 0   # Phase 9: all CTAs retired
                     # Phase 8 M3: signal pending record markers in this stream
                     if hasattr(s, "_pending_record_markers") and s._pending_record_markers:
                         end_cycle = result.metrics.get("cycles", 0)

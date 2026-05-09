@@ -155,6 +155,41 @@ class GlobalMemory:
         buf, off = self._seg_for(addr)
         buf[off:off+1].view(np.int8)[0] = np.int8(v)
 
+    def atomic_op(self, addr: int, op: str, val, ty) -> "old":
+        """Atomically read-modify-write at addr. Returns old value."""
+        from gpusim.frontend.ir import PtxType
+        if ty is PtxType.f32:
+            old = self.load_f32(addr)
+            new = self._apply_op_f32(op, old, val)
+            self.store_f32(addr, new)
+            return old
+        old = self.load_u32(addr)
+        new = self._apply_op_int(op, old, val)
+        self.store_u32(addr, new)
+        return old
+
+    @staticmethod
+    def _apply_op_int(op: str, old: int, val) -> int:
+        if op == "add": return (old + int(val)) & 0xFFFFFFFF
+        if op == "min": return min(old, int(val))
+        if op == "max": return max(old, int(val))
+        if op == "exch": return int(val) & 0xFFFFFFFF
+        if op == "cas":
+            expected, new_val = val
+            return int(new_val) & 0xFFFFFFFF if old == int(expected) else old
+        raise ValueError(f"unknown atomic op {op!r}")
+
+    @staticmethod
+    def _apply_op_f32(op: str, old: float, val) -> float:
+        if op == "add": return float(old) + float(val)
+        if op == "min": return min(float(old), float(val))
+        if op == "max": return max(float(old), float(val))
+        if op == "exch": return float(val)
+        if op == "cas":
+            expected, new_val = val
+            return float(new_val) if old == float(expected) else old
+        raise ValueError(f"unknown atomic op {op!r}")
+
 
 class SharedMemory:
     def __init__(self, size_bytes: int = 48 * 1024):

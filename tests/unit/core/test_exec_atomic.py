@@ -57,3 +57,39 @@ def test_smem_atomic_op_f32():
     old = s.atomic_op(0, 0, "add", 2.5, PtxType.f32)
     assert old == 1.5
     assert s.load_f32(0, 0) == 4.0
+
+
+def test_gmem_atomic_op_add_int():
+    import numpy as np
+    from gpusim.core.exec import GlobalMemory
+    from gpusim.frontend.ir import PtxType
+    g = GlobalMemory()
+    arr = np.array([100], dtype=np.uint32)
+    base = g.bind("X", arr)
+    old = g.atomic_op(base, "add", 5, PtxType.u32)
+    assert old == 100
+    assert int(arr[0]) == 105
+
+
+def test_gmem_atomic_op_cas_match():
+    import numpy as np
+    from gpusim.core.exec import GlobalMemory
+    from gpusim.frontend.ir import PtxType
+    g = GlobalMemory()
+    arr = np.array([7], dtype=np.uint32)
+    base = g.bind("X", arr)
+    old = g.atomic_op(base, "cas", (7, 99), PtxType.u32)
+    assert old == 7
+    assert int(arr[0]) == 99
+
+
+def test_gmem_atomic_op_cas_mismatch():
+    import numpy as np
+    from gpusim.core.exec import GlobalMemory
+    from gpusim.frontend.ir import PtxType
+    g = GlobalMemory()
+    arr = np.array([7], dtype=np.uint32)
+    base = g.bind("X", arr)
+    old = g.atomic_op(base, "cas", (5, 99), PtxType.u32)
+    assert old == 7
+    assert int(arr[0]) == 7   # unchanged

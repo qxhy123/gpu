@@ -385,6 +385,11 @@ class Stream:
     inflight: GridLaunch | None = None
     completed: list = field(default_factory=list)
     in_flight_ctas: int = 0     # NEW Phase 8 — count of dispatched CTAs not yet retired
+    priority: str = "normal"    # NEW Phase 8 — "high" | "normal" | "low"
+
+    def __post_init__(self):
+        if self.priority not in ("high", "normal", "low"):
+            raise ValueError(f"priority must be high/normal/low, got {self.priority!r}")
 
     def launch(self, ptx_src: str, grid: tuple, block: tuple,
                params: dict, *, kernel_name: str = "<unnamed>",

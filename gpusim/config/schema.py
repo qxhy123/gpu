@@ -85,6 +85,7 @@ class SMConfig:
 @dataclass
 class CtaSchedulerConfig:
     cta_policy: str = "rr"   # "rr" | "greedy"
+    priority_weights: dict = field(default_factory=lambda: {"high": 4, "normal": 2, "low": 1})  # NEW Phase 8
 
 
 @dataclass

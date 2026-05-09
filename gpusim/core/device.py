@@ -149,7 +149,8 @@ class Device:
         from gpusim.frontend.parser import parse
         from gpusim.trace.recorder import Recorder
 
-        sched = ConcurrentStreamScheduler(streams)
+        weights = getattr(getattr(self.cfg, "scheduler", None), "priority_weights", None)
+        sched = ConcurrentStreamScheduler(streams, priority_weights=weights)
         results_per_stream = {s.stream_id: [] for s in streams}
 
         while not all(s.is_idle() for s in streams):

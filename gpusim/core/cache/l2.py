@@ -1,4 +1,5 @@
 from __future__ import annotations
+from dataclasses import dataclass
 from typing import Protocol
 from gpusim.config.schema import CacheConfig
 from gpusim.core.atomic import L2AtomicQueue
@@ -9,6 +10,17 @@ from .l2_mshr import L2Mshr
 class HBMProtocol(Protocol):
     def request(self, line_addr: int, now: int) -> int: ...
     def write_request(self, line_addr: int, now: int) -> int: ...
+
+
+@dataclass
+class L2Line:
+    """Logical L2 cache line metadata used for window/partitioning tracking."""
+    addr: int
+    valid: bool = False
+    dirty: bool = False
+    last_use: int = 0
+    owner_stream_id: int = -1     # NEW Phase 8
+    in_window: bool = False       # NEW Phase 8
 
 
 class L2Cache:
@@ -29,6 +41,7 @@ class L2Cache:
         }
         self._mshr = L2Mshr(n_slots=cfg.l2_mshr_slots)
         self._atomic_queue = L2AtomicQueue(n_slots=cfg.atomic_queue_capacity)
+        self._stream_windows: dict = {}    # NEW Phase 8 — stream_id -> (start_set, n_sets)
 
     def fetch(self, *, line_addr: int, now: int, sm_id: int = -1) -> int:
         set_idx = line_addr & self._set_mask
@@ -162,3 +175,21 @@ class L2Cache:
             l2_hit_latency=self.cfg.l2_hit_latency,
         )
         return completion
+
+    # ------------------------------------------------------------------ #
+    # Phase 8 — stream window partitioning                                #
+    # ------------------------------------------------------------------ #
+
+    def register_stream_window(self, stream_id: int, start_set: int, n_sets: int) -> None:
+        """Reserve [start_set, start_set+n_sets) as a protected window for this stream."""
+        self._stream_windows[stream_id] = (start_set, n_sets)
+
+    def _line_in_window(self, line: "L2Line", set_idx: int) -> bool:
+        """Return True if *line* resides in its owner's registered window."""
+        if line.owner_stream_id < 0:
+            return False
+        window = self._stream_windows.get(line.owner_stream_id)
+        if window is None:
+            return False
+        start, n = window
+        return start <= set_idx < start + n

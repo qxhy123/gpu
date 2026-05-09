@@ -32,6 +32,7 @@ class InstrIssueEvent:
     op: str
     src_loc: tuple[str, int]
     active_mask: int
+    stream_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,7 @@ class GmemEvent:
     n_transactions: int
     efficiency: float
     addresses: tuple[int, ...]
+    stream_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,7 @@ class BarEvent:
     cycle: int
     cta_id: int
     barrier_id: int
+    stream_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -124,6 +127,7 @@ class MmaEvent:
     shape_k: int
     accum_dtype: str
     flops_count: int
+    stream_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -174,6 +178,7 @@ class CtaDispatchEvent:
     sm_id: int
     queue_position: int = 0
     active_warps_at_dispatch: int = 0
+    stream_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -183,6 +188,7 @@ class L2MshrEvent:
     line_addr: int
     sm_id: int
     n_waiters: int = 0
+    stream_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -198,6 +204,23 @@ class BulkStoreEvent:
     completion_at: int = -1
     commit_group_id: int = -1
     wait_n: int = -1
+    stream_id: int = 0
+
+
+@dataclass(frozen=True)
+class BulkLoadEvent:
+    kind: str          # "ISSUE" | "COMMIT_GROUP" | "WAIT_GROUP" | "DRAIN"
+    cycle: int
+    warp_group_id: int
+    sm_id: int
+    pc: int = 0
+    smem_dst: int = 0
+    gmem_base: int = 0
+    bytes_total: int = 0
+    completion_at: int = -1
+    commit_group_id: int = -1
+    wait_n: int = -1
+    stream_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -208,6 +231,7 @@ class ClusterDispatchEvent:
     sm_ids: tuple
     cta_ids: tuple
     queue_position: int = 0
+    stream_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -219,6 +243,7 @@ class ClusterBarrierEvent:
     rank: int
     sm_id: int
     arrived_count: int = 0
+    stream_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -233,6 +258,7 @@ class AtomicEvent:
     latency: int
     n_lanes: int = 1
     queue_depth_before: int = 0
+    stream_id: int = 0
 
 
 @dataclass(frozen=True)
@@ -244,3 +270,12 @@ class KernelLaunch:
     launch_cycle: int
     complete_cycle: int
     n_ctas: int
+
+
+# Canonical short aliases for Phase 7 stream_id API
+InstrIssue = InstrIssueEvent
+MemoryAccess = GmemEvent
+BarrierEvent = BarEvent
+ClusterDispatch = ClusterDispatchEvent
+ClusterBarrier = ClusterBarrierEvent
+CtaDispatch = CtaDispatchEvent

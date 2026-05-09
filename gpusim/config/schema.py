@@ -42,6 +42,9 @@ class CacheConfig:
     l2_hit_latency: int = 200
     l2_miss_install_latency: int = 10
     l2_mshr_slots: int = 32
+    atomic_op_latency: int = 10           # NEW (Phase 6)
+    atomic_queue_capacity: int = 32       # NEW
+    smem_atomic_op_extra_latency: int = 4 # NEW
 
 
 @dataclass

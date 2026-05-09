@@ -55,6 +55,9 @@ cache:
   l2_hit_latency: 200
   l2_miss_install_latency: 10
   l2_mshr_slots: 32
+  atomic_op_latency: 10
+  atomic_queue_capacity: 32
+  smem_atomic_op_extra_latency: 4
 
 hbm:
   channels: 8

@@ -104,6 +104,10 @@ SUPPORTED_KERNELS = [
     "event_fanout",
     "l2_window_demo",
     "multi_stream_pipeline_full",
+    # Phase 9 additions
+    "phase8_overlap_real",
+    "multi_event_fan_in",
+    "event_timing_benchmark",
 ]
 
 

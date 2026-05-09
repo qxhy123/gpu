@@ -30,10 +30,15 @@ python examples/vector_add/run.py
 - **Hopper Cluster (CGA) + distributed shared memory (dsmem)** — `mapa.shared::cluster` + `ld/st.shared::cluster` for cross-CTA smem access — `examples/cluster_basic/` + Chapter 19
 - **Cluster barrier sync** — `barrier.cluster.{arrive,wait}` two-phase async cluster sync + `mbarrier.{init,arrive,try_wait}.shared::cluster` — `examples/cluster_matmul_dsmem/` + Chapter 20
 - **Cluster TMA load** — `cp.async.bulk.tensor.shared::cluster` writes to remote CTA's smem — `examples/cluster_tma_pipeline/` + Chapter 21
+- **Global memory atomics (gmem atomic)** — 5 ops (add/min/max/exch/cas) × 3 dtypes (u32/s32/f32), L2AtomicQueue per-line FIFO for cross-SM serialization — `examples/atom_histogram/` + Chapter 22
+- **Shared memory atomics (smem atomic)** — same 5 ops × 3 dtypes, bank-conflict-aware serialization — `examples/atom_reduction_smem/` + Chapter 23
+- **Cluster TMA store + cooperative epilogue** — `cp.async.bulk.tensor.2d.global.shared::cluster` cluster-scope async epilogue — `examples/cluster_cooperative_epilogue/` + Chapter 24
+- **CAS-based spinlock** — `atom.cas` for lock-free synchronization patterns — `examples/atom_cas_spinlock/` + Chapter 25
+- **Reduction min/max** — `atom.red.min/max` across SMs, 4 new metrics (atomic_throughput_per_line, serialization_overhead, atom_red_ratio, cooperative_overlap) — `examples/red_min_max/` + Chapter 26
 
 ## Run a kernel and inspect the report
 ```bash
-# Option 1: Python API — Phase 5 cluster example
+# Option 1: Python API — Phase 6 atomic + cluster example
 python -c "
 import numpy as np, gpusim, pathlib
 from gpusim.config.loader import load_default
@@ -52,6 +57,9 @@ res = gpusim.run(ptx_src=ptx, grid=(8,1,1), block=(128,1,1),
 res.html_report('report.html')
 res.perfetto('trace.json')
 print(res.summary())
+# Phase 6: atomic metrics (available when kernel uses atom/red instructions)
+print(res.atomic_summary())
+print(res.atomic_metrics)         # dict: atomic_throughput_per_line, serialization_overhead, atom_red_ratio, cooperative_overlap
 # Phase 5: cluster-level metrics
 print(res.cluster_summary())
 # Phase 4: device-level metrics
@@ -64,6 +72,7 @@ print(res.cta_dispatch_events_df)
 # res.wgmma_events_df()           # DataFrame of async wgmma events
 # res.tma_events_df()             # DataFrame of TMA bulk-copy events
 # res.mbarrier_events_df()        # DataFrame of mbarrier phase transitions
+# res.atomic_events_df()          # DataFrame of AtomicEvent trace events
 "
 
 # Option 2: CLI (after staging .npy inputs)
@@ -74,8 +83,8 @@ gpusim run examples/vector_add/kernel.ptx \
     --mode timing \
     --output report.html --perfetto trace.json
 ```
-- `report.html` — open in any browser; Phase 3 adds §11 Tensor Core、§12 wgmma、§13 TMA、§14 Barrier sections; Phase 4 adds §15–§18 (CTA dispatch、L2 MSHR、bulk-store overlap、per-SM utilization); Phase 5 adds §19–§20 (cluster dispatch、cluster barrier stats)
-- `trace.json` — drag into https://ui.perfetto.dev; Phase 3 adds TC / TMA / Barrier tracks; Phase 4 adds per-SM swimlane; Phase 5 adds cluster swimlane
+- `report.html` — open in any browser; Phase 3 adds §11 Tensor Core、§12 wgmma、§13 TMA、§14 Barrier sections; Phase 4 adds §15–§18 (CTA dispatch、L2 MSHR、bulk-store overlap、per-SM utilization); Phase 5 adds §19–§20 (cluster dispatch、cluster barrier stats); Phase 6 adds §21 Atomic Operations、§22 Cooperative Epilogue
+- `trace.json` — drag into https://ui.perfetto.dev; Phase 3 adds TC / TMA / Barrier tracks; Phase 4 adds per-SM swimlane; Phase 5 adds cluster swimlane; Phase 6 adds Atomic track (AtomicEvent per-line FIFO serialization)
 
 ## What's modeled
 
@@ -88,7 +97,8 @@ gpusim run examples/vector_add/kernel.ptx \
 | 3 | ✅ done | Tensor Core (sync mma + wgmma) + TMA-lite |
 | 4 | ✅ done | Multi-SM topology, CTA scheduler, shared L2, TMA store |
 | 5 | ✅ done | Hopper Cluster CGA, dsmem, cluster barrier, cluster TMA |
-| 6+ | future | Warp shuffle, ITS, multi-GPU |
+| 6 | ✅ done | gmem/smem atomics (5 ops × 3 dtypes), cluster TMA store, cooperative epilogue |
+| 7+ | future | Warp shuffle, ITS, multi-GPU |
 
 ### Phase 1 ✅ — SIMT 基础
 Single SM, cycle-approximate, Hopper-shaped. PTX subset (~30 ops). Shared memory bank conflicts, global memory coalescing, regfile bank conflicts, multi-CTA occupancy.
@@ -104,6 +114,9 @@ Single SM, cycle-approximate, Hopper-shaped. PTX subset (~30 ops). Shared memory
 
 ### Phase 5 ✅ — Hopper Cluster (CGA) + Distributed Shared Memory + Cluster TMA
 **Hopper Thread-Block Cluster (CGA):** groups of 2/4/8 CTAs share a cluster-scoped address space. **Distributed shared memory (dsmem):** `mapa.shared::cluster` maps a remote CTA's smem address; `ld.shared::cluster` / `st.shared::cluster` perform cross-CTA smem reads/writes. **Two-phase cluster barrier:** `barrier.cluster.arrive` + `barrier.cluster.wait` provide hardware-accelerated cross-CTA synchronization. **Cluster mbarrier:** `mbarrier.init.shared::cluster`, `mbarrier.arrive.shared::cluster`, `mbarrier.try_wait.shared::cluster` extend async-pipeline barriers to cluster scope. **Cluster TMA load:** `cp.async.bulk.tensor.shared::cluster` issues a TMA load that writes directly into a remote CTA's smem, enabling zero-copy distribution of tiles across the cluster. HTML report adds §19–§20 (cluster dispatch、cluster barrier stats); Perfetto adds cluster swimlane.
+
+### Phase 6 ✅ — Atomics + Cluster TMA Store + Cooperative Epilogue
+**Global memory atomics (gmem atomic):** `atom.global` and `red.global` supporting 5 operations (add / min / max / exch / cas) × 3 data types (u32 / s32 / f32). **L2AtomicQueue:** per-cache-line FIFO queue that serializes concurrent atomic requests from multiple SMs, modeling real hardware cross-SM contention. **Shared memory atomics (smem atomic):** `atom.shared` and `red.shared` with bank-conflict-aware serialization. **Cluster TMA store:** `cp.async.bulk.tensor.2d.global.shared::cluster` cluster-scoped async smem→gmem epilogue. **Cooperative epilogue:** cluster-coordinated writeback pattern. **4 new metrics:** `atomic_throughput_per_line`, `serialization_overhead`, `atom_red_ratio`, `cooperative_overlap`. **1 new trace event:** `AtomicEvent` (op, dtype, address, SM, cycle) recorded to Parquet + surfaced in Perfetto Atomic track. **HTML report adds §21** (Atomic Operations — throughput, contention, per-op breakdown) **and §22** (Cooperative Epilogue — cluster store overlap).
 
 ## What's NOT modeled
 Warp shuffle, ITS, multi-GPU. See `docs/superpowers/specs/2026-05-07-gpusim-phase1-design.md` section 11.
@@ -135,3 +148,8 @@ Read `docs/tutorial/00-intro.md` first.
 | **19** | **Hopper Cluster CGA 入门 — mapa / ld.shared::cluster / cluster barrier** |
 | **20** | **Cluster + wgmma + dsmem — 跨 CTA smem 分块矩阵乘** |
 | **21** | **Cluster TMA 流水线 — cp.async.bulk.tensor.shared::cluster** |
+| **22** | **全局内存原子操作 — L2AtomicQueue 跨 SM 序列化** |
+| **23** | **共享内存原子操作 — bank conflict 感知序列化** |
+| **24** | **Cluster TMA store + 协作尾写 (cooperative epilogue)** |
+| **25** | **CAS 自旋锁 — lock-free 同步模式** |
+| **26** | **原子 reduction vs 共享内存 reduction — 吞吐比较** |

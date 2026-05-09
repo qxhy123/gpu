@@ -519,6 +519,31 @@ def event_wait_cycles_per_stream(stream_event_df) -> dict:
     return out
 
 
+def l2_window_hit_rate_per_stream(memory_events_df) -> dict:
+    """L2 hit rate per stream (assumes df has stream_id + hit columns)."""
+    if memory_events_df is None or memory_events_df.empty:
+        return {}
+    out = {}
+    for sid, group in memory_events_df.groupby("stream_id"):
+        total = len(group)
+        hits = group["hit"].sum() if "hit" in group.columns else 0
+        out[int(sid)] = float(hits) / total if total > 0 else 0.0
+    return out
+
+
+def l2_window_protection_efficiency(memory_events_df) -> float:
+    """Fraction of L2 hits that came from window-protected lines."""
+    if memory_events_df is None or memory_events_df.empty:
+        return 0.0
+    if "hit" not in memory_events_df.columns:
+        return 0.0
+    hits = memory_events_df[memory_events_df["hit"] == True]
+    if hits.empty: return 0.0
+    if "in_window" not in hits.columns: return 0.0
+    in_window = hits["in_window"].sum()
+    return float(in_window) / len(hits)
+
+
 def event_chain_critical_path(stream_event_df, kernel_launch_df) -> int:
     """Longest event-mediated dependency chain in cycles."""
     if stream_event_df is None or stream_event_df.empty:

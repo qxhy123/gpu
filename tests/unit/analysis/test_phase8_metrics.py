@@ -61,3 +61,25 @@ def test_event_chain_critical_path():
     cp = event_chain_critical_path(se_df, kl_df)
     # a (100) → ev1 → b (100) = 200 total
     assert cp == 200
+
+
+def test_l2_window_hit_rate_per_stream():
+    from gpusim.analysis.metrics import l2_window_hit_rate_per_stream
+    df = pd.DataFrame([
+        {"stream_id": 0, "hit": True}, {"stream_id": 0, "hit": True},
+        {"stream_id": 0, "hit": False}, {"stream_id": 1, "hit": False},
+    ])
+    out = l2_window_hit_rate_per_stream(df)
+    assert abs(out[0] - 2/3) < 0.01
+    assert abs(out[1] - 0.0) < 0.01
+
+
+def test_l2_window_protection_efficiency():
+    from gpusim.analysis.metrics import l2_window_protection_efficiency
+    df = pd.DataFrame([
+        {"hit": True, "in_window": True}, {"hit": True, "in_window": True},
+        {"hit": True, "in_window": False}, {"hit": False, "in_window": False},
+    ])
+    eff = l2_window_protection_efficiency(df)
+    # 2 in-window hits out of 3 total hits = 0.67
+    assert abs(eff - 2/3) < 0.01

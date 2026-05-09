@@ -563,6 +563,17 @@ class MultiStreamResult:
         kl_df = self.kernel_launch_events_df
         return event_chain_critical_path(se_df, kl_df)
 
+    def l2_window_hit_rate(self) -> dict:
+        from gpusim.analysis.metrics import l2_window_hit_rate_per_stream
+        if self._recorder is None: return {}
+        # Phase 8 minimal: memory events don't have hit/in_window columns yet
+        # Return empty for now; metric is API-ready for Phase 9 enrichment
+        return {}
+
+    def l2_window_protection_efficiency(self) -> float:
+        from gpusim.analysis.metrics import l2_window_protection_efficiency
+        return 0.0
+
 
 def synchronize(streams: list = None, *, config=None) -> "MultiStreamResult":
     """Drain all given streams; return aggregated MultiStreamResult.

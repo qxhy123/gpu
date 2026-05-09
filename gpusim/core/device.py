@@ -238,11 +238,18 @@ class Device:
                     sched.mark_grid_retired(s)
                     s.in_flight_ctas = 0   # Phase 9: all CTAs retired
                     # Phase 8 M3: signal pending record markers in this stream
+                    end_cycle = result.metrics.get("cycles", 0)
                     if hasattr(s, "_pending_record_markers") and s._pending_record_markers:
-                        end_cycle = result.metrics.get("cycles", 0)
                         for marker in s._pending_record_markers:
                             marker.event.signaled_at_cycle = end_cycle
                         s._pending_record_markers = []
+                    # Phase 9 T14: also drain trailing _RecordMarkers still in pending
+                    # (events recorded after the last kernel on a stream)
+                    from gpusim.api import _RecordMarker as _RM
+                    while s.pending and isinstance(s.pending[0], _RM):
+                        trailing = s.pending.popleft()
+                        trailing.event.recorded_in_stream = s
+                        trailing.event.signaled_at_cycle = end_cycle
 
         total_cycles = max((r.metrics.get("cycles", 0)
                               for results in results_per_stream.values()

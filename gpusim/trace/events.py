@@ -198,3 +198,24 @@ class BulkStoreEvent:
     completion_at: int = -1
     commit_group_id: int = -1
     wait_n: int = -1
+
+
+@dataclass(frozen=True)
+class ClusterDispatchEvent:
+    cycle: int
+    cluster_id: int
+    cluster_size: int
+    sm_ids: tuple
+    cta_ids: tuple
+    queue_position: int = 0
+
+
+@dataclass(frozen=True)
+class ClusterBarrierEvent:
+    kind: str          # "ARRIVE" | "WAIT_BLOCK" | "WAIT_RELEASE"
+    cycle: int
+    cluster_id: int
+    cta_id: int
+    rank: int
+    sm_id: int
+    arrived_count: int = 0

@@ -181,6 +181,12 @@ def write_parquet(rec: Recorder, out: str | Path) -> None:
     if rec.bulk_store_events:
         pd.DataFrame([asdict(e) for e in rec.bulk_store_events]).to_parquet(
             out / "bulk_store.parquet", index=False)
+    if rec.cluster_dispatch_events:
+        pd.DataFrame([asdict(e) for e in rec.cluster_dispatch_events]).to_parquet(
+            out / "cluster_dispatch.parquet", index=False)
+    if rec.cluster_barrier_events:
+        pd.DataFrame([asdict(e) for e in rec.cluster_barrier_events]).to_parquet(
+            out / "cluster_barrier.parquet", index=False)
 
 
 # write_all is the canonical name used by Phase 3 callers; delegates to write_parquet

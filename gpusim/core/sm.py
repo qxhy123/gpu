@@ -187,8 +187,7 @@ class SM:
                     pool = self._device_cluster_barriers.get(cluster_id)
                     if pool is not None:
                         pool.arrive(rank)
-                    if (self.recorder is not None
-                            and hasattr(self.recorder, "cluster_barrier")):
+                    if self.recorder is not None:
                         self.recorder.cluster_barrier(
                             kind="ARRIVE", cycle=cycle,
                             cluster_id=cluster_id, cta_id=cid,
@@ -214,8 +213,7 @@ class SM:
                     w.stack.update_top_pc(w.cluster_barrier_wait_pc + 1)
                     w.stack.maybe_pop()
                     w.cluster_barrier_wait_pc = -1
-                    if (self.recorder is not None
-                            and hasattr(self.recorder, "cluster_barrier")):
+                    if self.recorder is not None:
                         self.recorder.cluster_barrier(
                             kind="WAIT_RELEASE", cycle=cycle,
                             cluster_id=w.cluster_id,

@@ -31,6 +31,8 @@ class Recorder:
         self.cta_dispatch_events: list = []
         self.l2_mshr_events: list = []
         self.bulk_store_events: list = []
+        self.cluster_dispatch_events: list = []
+        self.cluster_barrier_events: list = []
 
     def warp_state(self, *, cycle: int, warp_id: int, state: str, pc: int) -> None:
         cur = self._cur_state.get(warp_id)
@@ -208,4 +210,22 @@ class Recorder:
             pc=pc, smem_src=smem_src, gmem_base=gmem_base,
             bytes_total=bytes_total, completion_at=completion_at,
             commit_group_id=commit_group_id, wait_n=wait_n,
+        ))
+
+    def cluster_dispatch(self, *, cycle: int, cluster_id: int,
+                            cluster_size: int, sm_ids: tuple,
+                            cta_ids: tuple, queue_position: int = 0) -> None:
+        from gpusim.trace.events import ClusterDispatchEvent
+        self.cluster_dispatch_events.append(ClusterDispatchEvent(
+            cycle=cycle, cluster_id=cluster_id, cluster_size=cluster_size,
+            sm_ids=sm_ids, cta_ids=cta_ids, queue_position=queue_position,
+        ))
+
+    def cluster_barrier(self, *, kind: str, cycle: int, cluster_id: int,
+                          cta_id: int, rank: int, sm_id: int,
+                          arrived_count: int = 0) -> None:
+        from gpusim.trace.events import ClusterBarrierEvent
+        self.cluster_barrier_events.append(ClusterBarrierEvent(
+            kind=kind, cycle=cycle, cluster_id=cluster_id, cta_id=cta_id,
+            rank=rank, sm_id=sm_id, arrived_count=arrived_count,
         ))

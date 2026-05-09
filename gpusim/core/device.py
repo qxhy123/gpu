@@ -104,17 +104,15 @@ class Device:
                             queue_position=cta_pointer + i,
                             active_warps_at_dispatch=sm.active_warp_count(),
                         )
-                # Phase 5 cluster_dispatch event will be added in T19; skip if recorder lacks
                 if cluster_size > 1 and self.recorder is not None:
-                    if hasattr(self.recorder, "cluster_dispatch"):
-                        self.recorder.cluster_dispatch(
-                            cycle=cycle, cluster_id=cluster_id,
-                            cluster_size=cluster_size,
-                            sm_ids=tuple(sm.sm_id for sm in target_sms),
-                            cta_ids=tuple(cta_queue[cta_pointer + i][0]
-                                            for i in range(cluster_size)),
-                            queue_position=cluster_id,
-                        )
+                    self.recorder.cluster_dispatch(
+                        cycle=cycle, cluster_id=cluster_id,
+                        cluster_size=cluster_size,
+                        sm_ids=tuple(sm.sm_id for sm in target_sms),
+                        cta_ids=tuple(cta_queue[cta_pointer + i][0]
+                                        for i in range(cluster_size)),
+                        queue_position=cluster_id,
+                    )
                 cta_pointer += cluster_size
         _try_dispatch()
 

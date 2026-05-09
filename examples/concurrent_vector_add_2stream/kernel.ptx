@@ -1,0 +1,28 @@
+// examples/concurrent_vector_add_2stream/kernel.ptx
+// Single entry used by both streams (each stream passes its own arrays).
+.visible .entry vec_add_kernel(.param .u64 A, .param .u64 B, .param .u64 OUT)
+{
+    .reg .u32 %r<4>;
+    .reg .u64 %rd<6>;
+    .reg .f32 %f<4>;
+
+    ld.param.u64 %rd0, [A];
+    ld.param.u64 %rd1, [B];
+    ld.param.u64 %rd2, [OUT];
+
+    mov.u32 %r0, %tid.x;
+    shl.b32 %r1, %r0, 2;
+    cvt.u64.u32 %rd3, %r1;
+
+    add.u64 %rd4, %rd0, %rd3;
+    ld.global.f32 %f0, [%rd4];
+    add.u64 %rd4, %rd1, %rd3;
+    ld.global.f32 %f1, [%rd4];
+
+    add.f32 %f2, %f0, %f1;
+
+    add.u64 %rd4, %rd2, %rd3;
+    st.global.f32 [%rd4], %f2;
+
+    ret;
+}

@@ -710,7 +710,8 @@ def _is_tma_mbarrier_op(op: str) -> bool:
 
 
 def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
-                   grid: tuple[int,int,int], block: tuple[int,int,int]) -> None:
+                   grid: tuple[int,int,int], block: tuple[int,int,int],
+                   cluster_size: int = 1) -> None:
     """Run kernel functionally over the grid. Mutates numpy arrays in `params` in place."""
     from gpusim.core.tma import TensorDescriptorPool
     from gpusim.core.mbarrier import MbarrierPool
@@ -728,14 +729,23 @@ def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
     threads_per_cta = block[0] * block[1] * block[2]
     warps_per_cta = (threads_per_cta + 31) // 32
 
+    # Allocate shared memory for all CTAs up front (needed for cross-CTA dsmem reads)
+    grid_size = grid[0] * grid[1] * grid[2]
+    for cta_id_alloc in range(grid_size):
+        s.allocate_cta(cta_id_alloc, 48 * 1024)
+
     for cz in range(grid[2]):
       for cy in range(grid[1]):
         for cx in range(grid[0]):
             cta_id = cx + cy * grid[0] + cz * grid[0] * grid[1]
-            s.allocate_cta(cta_id, 48 * 1024)
+            cluster_id = cta_id // cluster_size if cluster_size > 1 else -1
+            cluster_rank = cta_id % cluster_size if cluster_size > 1 else -1
             ex = InstrExecutor(kernel=k, gmem=g, smem=s, params=paramspace,
                                cta_id=cta_id, ctaid=(cx,cy,cz),
                                nctaid=grid, ntid=block)
+            ex.cluster_id = cluster_id
+            ex.cluster_rank = cluster_rank
+            ex.cluster_size = cluster_size
             # Per-CTA TMA descriptor pool and mbarrier pool for functional mode
             fn_tma_pool = TensorDescriptorPool()
             fn_mbar_pool = MbarrierPool()
@@ -775,6 +785,12 @@ def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
                     # cp.async.bulk commit/wait: no-op in functional mode
                     if op in ("cp.async.bulk.commit_group",
                               "cp.async.bulk.wait_group"):
+                        st.update_top_pc(pc + 1); st.maybe_pop()
+                        progressed = True
+                        continue
+                    # barrier.cluster.arrive/wait: no-op in functional mode
+                    # (CTAs run sequentially; smem is shared across all CTAs already)
+                    if op in ("barrier.cluster.arrive", "barrier.cluster.wait"):
                         st.update_top_pc(pc + 1); st.maybe_pop()
                         progressed = True
                         continue
@@ -854,10 +870,11 @@ def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
                         progressed = True
                 # Execute TMA/mbarrier ops when all warps in warp-group arrive at same PC
                 # (warp-group uniform ops: execute once from warp 0, propagate result to all)
+                # Unlike wgmma, TMA/mbarrier can work with any warp-group size (>=1 warp).
                 for wg in range(n_wgs):
                     wg_warp_ids = list(range(wg * wg_size,
                                              min((wg + 1) * wg_size, warps_per_cta)))
-                    if len(wg_warp_ids) != 4:
+                    if not wg_warp_ids:
                         continue
                     wg_tma_pcs = [tma_pcs[j] for j in wg_warp_ids]
                     # A warp-group can fire when all warps are either done or waiting at same PC
@@ -921,4 +938,6 @@ def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
                         progressed = True
                 if not progressed:
                     raise RuntimeError("functional_run: no warp progressed (deadlock)")
-            s.free_cta(cta_id)
+    # Free all CTA smem (allocated upfront)
+    for cta_id_free in range(grid_size):
+        s.free_cta(cta_id_free)

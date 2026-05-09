@@ -230,7 +230,12 @@ def run(*, ptx_src: str | None = None, ptx_path: str | Path | None = None,
     outputs = {k: v for k, v in params.items() if isinstance(v, np.ndarray)}
 
     if mode == "functional":
-        functional_run(ptx_src, params=params, grid=grid, block=block)
+        # Resolve cluster_size from config (if provided)
+        fn_cluster_size = 1
+        if config is not None and not isinstance(config, (str, __import__("pathlib").Path)):
+            fn_cluster_size = getattr(config, "cluster_size", 1)
+        functional_run(ptx_src, params=params, grid=grid, block=block,
+                       cluster_size=fn_cluster_size)
         return Result(outputs=outputs, mode="functional", metrics={})
     if mode == "timing":
         from gpusim.frontend.parser import parse

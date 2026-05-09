@@ -1,0 +1,92 @@
+// examples/cluster_tma_pipeline/kernel.ptx
+// 4-CTA cluster TMA + dsmem distribution demo.
+//
+// CTA 0 thread 0 uses TMA to load 256 fp32 elements (1024 bytes) from SRC
+// into CTA 0's shared memory (smem_T at offset 0).
+// A cluster barrier synchronises all 4 CTAs.
+// Each CTA then reads its 64-element slice from CTA 0's smem_T via
+// mapa.shared::cluster (rank=0) + ld.shared::cluster.
+// Each of the 32 threads handles 2 elements: elem[rank*64+tid] and elem[rank*64+tid+32].
+//
+// Grid:  (4, 1, 1)   — one CTA per cluster rank
+// Block: (32, 1, 1)  — 32 threads per CTA (one warp), each handles 2 elements
+// Params: SRC (fp32[256]), OUT (fp32[256])
+//
+// Smem layout (per CTA):
+//   offset    0 .. 1023  : smem_T   (256 × fp32 = 1024 bytes, filled by CTA 0 TMA)
+//   offset 1024 .. 1031  : smem_mbar (8 bytes, mbarrier, used by CTA 0 only)
+
+.entry test(.param .u64 SRC, .param .u64 OUT)
+{
+    .reg .u64 %rd<16>;
+    .reg .u32 %r<16>;
+    .reg .f32 %f0;
+    .reg .pred %p<4>;
+
+    ld.param.u64 %rd0, [SRC];
+    ld.param.u64 %rd1, [OUT];
+
+    // tid.x (0..31)
+    mov.u32 %r0, %tid.x;
+
+    // cluster rank (0..3)
+    getctarank.u32 %r1;
+
+    // ---- CTA 0 only: init mbarrier + issue TMA load ----
+    // Guard: skip if not CTA rank 0
+    setp.ne.u32 %p0, %r1, 0;
+    @%p0 bra CLUSTER_SYNC;
+
+    // Guard: skip if not thread 0
+    setp.ne.u32 %p1, %r0, 0;
+    @%p1 bra CLUSTER_SYNC;
+
+    // smem_mbar lives at offset 1024
+    mov.u64 %rd2, 1024;
+    mbarrier.init.shared::cta [%rd2], 1;
+
+    // TMA descriptor: 256 cols × 1 row of fp32, row-stride=256 elems, 4 bytes/elem
+    // This copies 256*1*4 = 1024 bytes from SRC into smem_T (offset 0)
+    gpusim.tma_desc %rd3, %rd0, 256, 1, 256, 4;
+
+    // smem_T destination starts at offset 0
+    mov.u64 %rd4, 0;
+    cp.async.bulk.tensor.2d.shared::cluster.global.mbarrier::complete_tx::bytes
+        [%rd4], [%rd3], [%rd2];
+
+CLUSTER_SYNC:
+    barrier.cluster.arrive;
+    barrier.cluster.wait;
+
+    // ---- All CTAs: read 64-element slice from CTA 0's smem_T via mapa + dsmem ----
+    // mapa(smem_base=0, rank=0) -> encoded remote address base
+    mov.u64 %rd5, 0;
+    mov.u32 %r2, 0;
+    mapa.shared::cluster %rd6, %rd5, %r2;
+
+    // CTA rank R covers elements [R*64 .. R*64+63]
+    // Thread tid handles elem A = R*64+tid  and  elem B = R*64+tid+32
+
+    // ---- Element A: rank*64 + tid ----
+    mul.lo.s32 %r3, %r1, 64;
+    add.s32 %r4, %r3, %r0;         // r4 = rank*64 + tid
+    mul.lo.s32 %r5, %r4, 4;        // r5 = byte offset A
+    cvt.u64.u32 %rd7, %r5;
+    add.u64 %rd8, %rd6, %rd7;
+    ld.shared::cluster.f32 %f0, [%rd8];
+    add.u64 %rd9, %rd1, %rd7;
+    st.global.f32 [%rd9], %f0;
+
+    // ---- Element B: rank*64 + tid + 32 ----
+    add.s32 %r6, %r4, 32;          // r6 = rank*64 + tid + 32
+    mul.lo.s32 %r7, %r6, 4;        // r7 = byte offset B
+    cvt.u64.u32 %rd10, %r7;
+    add.u64 %rd11, %rd6, %rd10;
+    ld.shared::cluster.f32 %f0, [%rd11];
+    add.u64 %rd12, %rd1, %rd10;
+    st.global.f32 [%rd12], %f0;
+
+    barrier.cluster.arrive;
+    barrier.cluster.wait;
+    ret;
+}

@@ -614,6 +614,69 @@ class SubCore:
             w.stack.maybe_pop()
             return
 
+        if op.startswith("atom.global.") or op.startswith("red.global."):
+            is_atom = op.startswith("atom.")
+            # op_name: "atom.global.add.u32" -> parts[2] = "add"
+            op_name = op.split(".")[2]
+            ty = instr.type
+            # Sync active_mask from SIMT stack
+            w.fn_state.active_mask = w.stack.top().active_mask
+            w.fn_state.pc = w.stack.top().pc
+            # Per-lane functional update + collect cache-line addresses
+            line_addrs: set[int] = set()
+            ex = w.executor if w.executor is not None else self.executor
+            for lane in range(32):
+                if not ex._lane_active(w.fn_state, lane, instr):
+                    continue
+                t = w.fn_state.threads[lane]
+                addr = t.get_u64(instr.src[0].name)
+                val = ex._read(t, instr.src[1], ty)
+                if op_name == "cas":
+                    expected = val
+                    new_val = ex._read(t, instr.src[2], ty)
+                    val_passed = (expected, new_val)
+                else:
+                    val_passed = val
+                old = ex.gmem.atomic_op(int(addr), op_name, val_passed, ty)
+                if is_atom:
+                    ex._write(t, instr.dst[0], old, ty)
+                line_addrs.add(int(addr) // 128)
+            # Timing: per cache-line, queue through L2 atomic ALU
+            _l2 = (self.l1.l2 if self.l1 is not None
+                   and hasattr(self.l1, "l2") else None)
+            if _l2 is not None:
+                max_completion = now
+                for line in sorted(line_addrs):
+                    c = _l2.atomic_op(
+                        line_addr=line, sm_id=getattr(self, "sm_id", -1),
+                        op=op_name, op_kind="atom" if is_atom else "red", now=now,
+                    )
+                    max_completion = max(max_completion, c)
+                completion = max_completion
+            else:
+                completion = now + 50  # fallback when no L2
+            # Trace
+            if self.recorder is not None:
+                for line in sorted(line_addrs):
+                    self.recorder.atomic(
+                        cycle=now, sm_id=getattr(self, "sm_id", -1),
+                        warp_id=w.warp_id, kind="ATOM" if is_atom else "RED",
+                        op=op_name, space="global", line_addr=line,
+                        latency=completion - now,
+                        n_lanes=sum(1 for lane in range(32)
+                                    if (w.fn_state.active_mask >> lane) & 1),
+                    )
+                self.recorder.instr_issue(
+                    cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
+                    src_loc=(instr.src_loc.file, instr.src_loc.line),
+                    active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                )
+            if is_atom and instr.dst:
+                w.scoreboard.mark_write(instr.dst[0].name, completion, origin="atomic")
+            w.stack.update_top_pc(w.stack.top().pc + 1)
+            w.stack.maybe_pop()
+            return
+
         if op.startswith("mbarrier.try_wait."):
             # dst[0] = pred result reg, src[0] = mbar addr reg, src[1] = expected_phase imm
             pred_reg = instr.dst[0]

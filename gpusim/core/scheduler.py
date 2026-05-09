@@ -178,3 +178,62 @@ class MultiStreamScheduler:
         Scheduler can now advance to next pending grid."""
         s.inflight = None
         self._cta_iters.pop(s.stream_id, None)
+
+
+class ConcurrentStreamScheduler:
+    """Per-cycle weighted RR over multiple streams, with event-block awareness.
+
+    Each cycle, scheduler iterates streams and dispatches up to weight CTAs
+    per stream (default high=4, normal=2, low=1). Event-blocked streams skipped.
+    """
+
+    def __init__(self, streams: list, priority_weights: dict | None = None):
+        self.streams = list(streams)
+        self.cursor = 0
+        self._cta_iters: dict = {}
+        self._priority_weights = priority_weights or {"high": 4, "normal": 2, "low": 1}
+
+    def stream_weight(self, s) -> int:
+        return self._priority_weights.get(getattr(s, "priority", "normal"), 2)
+
+    def is_event_blocked(self, s, current_cycle: int) -> bool:
+        # Phase 8 M3 will activate event_waits; for now nothing blocks
+        for ev in getattr(s, "event_waits", []):
+            if not ev.is_signaled(current_cycle): return True
+        return False
+
+    def _ensure_inflight(self, s) -> bool:
+        if s.inflight is None and s.pending:
+            head = s.pending.popleft()
+            # Phase 8 M3 will add _RecordMarker handling; for now treat all as GridLaunch
+            s.inflight = head
+            self._cta_iters[s.stream_id] = _CtaIter(head.grid)
+            s.in_flight_ctas = head.grid[0] * head.grid[1] * head.grid[2]
+        return s.inflight is not None
+
+    def _pick_sm(self, available_sms, cta):
+        for sm in available_sms:
+            if getattr(sm, "cap", 1) > 0:
+                return sm
+        return None
+
+    def step(self, available_sms, current_cycle: int) -> list:
+        """Returns list of (stream, cta, sm) dispatches for this cycle."""
+        decisions = []
+        for s in self.streams:
+            if s.is_idle() and s.in_flight_ctas == 0: continue
+            if self.is_event_blocked(s, current_cycle): continue
+            weight = self.stream_weight(s)
+            for _ in range(weight):
+                if not available_sms: break
+                if not self._ensure_inflight(s): break
+                cta = self._cta_iters[s.stream_id].next()
+                if cta is None: break
+                sm = self._pick_sm(available_sms, cta)
+                if sm is None: break
+                decisions.append((s, cta, sm))
+        return decisions
+
+    def mark_grid_retired(self, s) -> None:
+        s.inflight = None
+        self._cta_iters.pop(s.stream_id, None)

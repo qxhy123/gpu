@@ -244,6 +244,43 @@ class Result:
                  f"avg barrier wait={m['avg_barrier_wait']:.1f} cyc / "
                  f"dsmem remote rate={m['dsmem_remote_rate']*100:.1f}%")
 
+    @property
+    def atomic_events_df(self):
+        from gpusim.viz.notebook import atomic_events_dataframe
+        return atomic_events_dataframe(self._recorder) if self._recorder else None
+
+    @property
+    def atomic_metrics(self) -> dict:
+        if self._recorder is None:
+            return {}
+        from gpusim.analysis.metrics import (
+            atomic_throughput_per_line, atomic_serialization_overhead,
+            atom_vs_red_ratio, cooperative_epilogue_overlap,
+        )
+        cycles = self.metrics.get("cycles", 1)
+        atomic_df = self.atomic_events_df
+        if atomic_df is None or atomic_df.empty:
+            return {"count": 0}
+        per_line = atomic_throughput_per_line(atomic_df, cycles)
+        peak_depth = int(per_line["atomic_count"].max()) if not per_line.empty else 0
+        return {
+            "count": len(atomic_df),
+            "peak_queue_depth": peak_depth,
+            "serialization_overhead": atomic_serialization_overhead(atomic_df, cycles),
+            "atom_red_ratio": atom_vs_red_ratio(atomic_df),
+            "cooperative_overlap": cooperative_epilogue_overlap(
+                self.bulk_store_events_df, self.mma_events_df,
+            ),
+        }
+
+    def atomic_summary(self) -> str:
+        m = self.atomic_metrics
+        if not m or m.get("count", 0) == 0:
+            return "no atomic ops"
+        return (f"atomic count={m['count']} / "
+                 f"hot line peak depth={m['peak_queue_depth']} / "
+                 f"serial overhead={m['serialization_overhead']*100:.1f}%")
+
     def html_report(self, path):
         if self._recorder is None:
             raise ValueError("no recorder; run in timing mode")

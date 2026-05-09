@@ -126,6 +126,14 @@ def cluster_barrier_events_dataframe(rec):
     return pd.DataFrame([asdict(e) for e in rec.cluster_barrier_events])
 
 
+def atomic_events_dataframe(rec):
+    import pandas as pd
+    from dataclasses import asdict
+    if not rec.atomic_events:
+        return pd.DataFrame()
+    return pd.DataFrame([asdict(e) for e in rec.atomic_events])
+
+
 def instr_issue_dataframe(rec):
     import pandas as pd
     from dataclasses import asdict

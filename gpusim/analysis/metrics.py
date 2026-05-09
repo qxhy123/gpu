@@ -352,6 +352,53 @@ def dsmem_remote_access_rate(instr_issue_df) -> float:
     return float(len(cluster_ops)) / len(shared_ops)
 
 
+def atomic_throughput_per_line(atomic_df, total_cycles: int) -> "pd.DataFrame":
+    """Per-line atomic throughput (count + atomic ops per cycle)."""
+    if atomic_df is None or atomic_df.empty:
+        return pd.DataFrame(columns=["line_addr", "atomic_count", "throughput"])
+    grouped = atomic_df.groupby("line_addr").size().reset_index(name="atomic_count")
+    grouped["throughput"] = grouped["atomic_count"] / max(total_cycles, 1)
+    return grouped.sort_values("atomic_count", ascending=False)
+
+
+def atomic_serialization_overhead(atomic_df, total_cycles: int) -> float:
+    """Total atomic latency / total cycles (proxy for L2 ALU utilization)."""
+    if atomic_df is None or atomic_df.empty or total_cycles <= 0:
+        return 0.0
+    total_latency = float(atomic_df["latency"].sum())
+    return min(1.0, total_latency / total_cycles)
+
+
+def atom_vs_red_ratio(atomic_df) -> dict:
+    """Fraction of atom vs red events."""
+    if atomic_df is None or atomic_df.empty:
+        return {"atom": 0.0, "red": 0.0}
+    n = len(atomic_df)
+    atom_count = int((atomic_df["kind"] == "ATOM").sum())
+    red_count = int((atomic_df["kind"] == "RED").sum())
+    return {"atom": atom_count / n, "red": red_count / n}
+
+
+def cooperative_epilogue_overlap(bulk_store_df, mma_df) -> float:
+    """Fraction of in-flight bulk store cycles during which mma events occurred."""
+    if bulk_store_df is None or bulk_store_df.empty:
+        return 0.0
+    issues = bulk_store_df[bulk_store_df["kind"] == "ISSUE"] if "kind" in bulk_store_df.columns else bulk_store_df
+    if issues.empty:
+        return 0.0
+    total_inflight = 0
+    overlapped = 0
+    for _, row in issues.iterrows():
+        start = int(row["cycle"])
+        end = int(row.get("completion_at", start))
+        total_inflight += max(0, end - start)
+        if mma_df is not None and not mma_df.empty:
+            count = int(((mma_df["cycle"] >= start) & (mma_df["cycle"] <= end)).sum())
+            if count > 0:
+                overlapped += min(end - start, count * 8)
+    return overlapped / max(total_inflight, 1)
+
+
 def bulk_store_async_overlap_ratio(bulk_store_df, warp_state_df) -> float:
     if bulk_store_df is None or bulk_store_df.empty:
         return 0.0

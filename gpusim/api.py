@@ -589,6 +589,20 @@ class MultiStreamResult:
         from gpusim.analysis.metrics import l2_window_protection_efficiency
         return 0.0
 
+    def actual_cross_grid_overlap_cycles(self) -> int:
+        from gpusim.analysis.metrics import actual_cross_grid_overlap_cycles
+        df = self.kernel_launch_events_df
+        return actual_cross_grid_overlap_cycles(df, self.total_cycles or 0)
+
+    def l2_eviction_protected_count(self) -> dict:
+        from gpusim.analysis.metrics import l2_eviction_protected_count
+        if self._recorder is None: return {}
+        from dataclasses import asdict
+        import pandas as pd
+        rows = [asdict(e) for e in getattr(self._recorder, "gmem_events", [])]
+        df = pd.DataFrame(rows) if rows else None
+        return l2_eviction_protected_count(df)
+
 
 def synchronize(streams: list = None, *, config=None) -> "MultiStreamResult":
     """Drain all given streams; return aggregated MultiStreamResult.

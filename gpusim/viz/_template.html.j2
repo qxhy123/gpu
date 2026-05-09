@@ -139,6 +139,11 @@
 {{ l2_window_heatmap_html | safe }}
 {% endif %}
 
+{% if combined_overlap_html %}
+<h2>§32 Combined overlap — priority + events + L2 window</h2>
+{{ combined_overlap_html | safe }}
+{% endif %}
+
 <script>
 Plotly.newPlot("stall_pie", {{ stall_pie_json|safe }}, {});
 Plotly.newPlot("ipc_line", {{ ipc_line_json|safe }}, {});

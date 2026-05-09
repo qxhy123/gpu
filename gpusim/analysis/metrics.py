@@ -570,3 +570,32 @@ def event_chain_critical_path(stream_event_df, kernel_launch_df) -> int:
                          for _, r in kernel_launch_df.iterrows())
         max_chain = max(max_chain, max_solo)
     return max_chain
+
+
+def actual_cross_grid_overlap_cycles(kernel_launch_df, total_cycles: int) -> int:
+    """Cycles where ≥2 launches were in-flight simultaneously."""
+    if kernel_launch_df is None or kernel_launch_df.empty or total_cycles <= 0:
+        return 0
+    overlap = 0
+    for cycle in range(int(total_cycles)):
+        active = sum(1 for _, row in kernel_launch_df.iterrows()
+                       if int(row["launch_cycle"]) <= cycle <= int(row["complete_cycle"]))
+        if active >= 2:
+            overlap += 1
+    return overlap
+
+
+def l2_eviction_protected_count(gmem_events_df) -> dict:
+    """Per-stream count of misses where in_window=False (proxy for blocked installs)."""
+    if gmem_events_df is None or gmem_events_df.empty:
+        return {}
+    if "stream_id" not in gmem_events_df.columns:
+        return {}
+    out = {}
+    for sid, group in gmem_events_df.groupby("stream_id"):
+        if "hit" in group.columns and "in_window" in group.columns:
+            blocked = ((group["hit"] == False) & (group["in_window"] == False)).sum()
+            out[int(sid)] = int(blocked)
+        else:
+            out[int(sid)] = 0
+    return out

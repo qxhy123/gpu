@@ -200,6 +200,27 @@ def build_perfetto(rec: Recorder) -> dict:
             "args": {"event_id": ev.event_id, "op": ev.op},
         })
 
+    # Phase 9: record→wait async arrows
+    record_events = {}
+    for ev in getattr(rec, "stream_event_events", []):
+        if ev.op == "record":
+            record_events[ev.event_id] = ev
+    for ev in getattr(rec, "stream_event_events", []):
+        if ev.op == "wait_satisfied" and ev.event_id in record_events:
+            rec_ev = record_events[ev.event_id]
+            events.append({
+                "name": f"event_{ev.event_id}_chain",
+                "cat": "stream_event_arrow", "ph": "s",
+                "id": ev.event_id, "ts": rec_ev.cycle,
+                "pid": f"Stream-{rec_ev.stream_id}", "tid": "events",
+            })
+            events.append({
+                "name": f"event_{ev.event_id}_chain",
+                "cat": "stream_event_arrow", "ph": "f", "bp": "e",
+                "id": ev.event_id, "ts": ev.cycle,
+                "pid": f"Stream-{ev.stream_id}", "tid": "events",
+            })
+
     return {"traceEvents": events, "displayTimeUnit": "ns"}
 
 

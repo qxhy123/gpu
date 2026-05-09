@@ -215,6 +215,7 @@ def build_html(rec: Recorder, *, kernel_name: str, grid, block,
         priority_dispatch_html=_render_priority_dispatch(rec),
         event_timeline_html=_render_event_timeline(rec),
         l2_window_heatmap_html=_render_l2_window_heatmap(rec),
+        combined_overlap_html=_render_combined_overlap(rec),
     )
 
 
@@ -336,6 +337,23 @@ def _render_per_stream_breakdown(rec):
     if not rows:
         return ""
     return "<h3>Per-stream event breakdown</h3>" + pd.DataFrame(rows).to_html(index=False)
+
+
+def _render_combined_overlap(rec):
+    """Phase 9 §32: combined gantt with priority/event/window annotations."""
+    if not getattr(rec, "kernel_launch_events", None):
+        return ""
+    if not getattr(rec, "stream_event_events", None):
+        return ""
+    from dataclasses import asdict
+    import pandas as pd
+    kl = pd.DataFrame([asdict(e) for e in rec.kernel_launch_events])
+    se = pd.DataFrame([asdict(e) for e in rec.stream_event_events])
+    parts = ["<h3>Kernel launches with event overlay</h3>"]
+    parts.append(kl.to_html(index=False))
+    parts.append("<h3>Stream events</h3>")
+    parts.append(se.to_html(index=False))
+    return "\n".join(parts)
 
 
 def save_html(rec: Recorder, path: str | Path, **kwargs) -> None:

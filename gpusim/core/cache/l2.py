@@ -43,7 +43,8 @@ class L2Cache:
         self._atomic_queue = L2AtomicQueue(n_slots=cfg.atomic_queue_capacity)
         self._stream_windows: dict = {}    # NEW Phase 8 — stream_id -> (start_set, n_sets)
 
-    def fetch(self, *, line_addr: int, now: int, sm_id: int = -1) -> int:
+    def fetch(self, *, line_addr: int, now: int, sm_id: int = -1,
+              requesting_stream_id: int = -1) -> int:
         set_idx = line_addr & self._set_mask
         tag = line_addr >> self._set_bits
         line = self._sets[set_idx].find(tag)
@@ -85,6 +86,8 @@ class L2Cache:
         entry.completion_at = completion
         evicted = self._sets[set_idx].install(
             tag=tag, dirty=False, origin_sm=sm_id,
+            requesting_stream_id=requesting_stream_id,
+            line_in_window_check=self._line_in_window,
         )
         way = next(i for i, ln in enumerate(self._sets[set_idx]._lines)
                     if ln.tag == tag and ln.valid)
@@ -124,7 +127,8 @@ class L2Cache:
                     sm_id=entry.origin_sm, n_waiters=len(entry.waiters),
                 )
 
-    def write_through(self, line_addr: int, now: int, sm_id: int = -1) -> None:
+    def write_through(self, line_addr: int, now: int, sm_id: int = -1,
+                      requesting_stream_id: int = -1) -> None:
         set_idx = line_addr & self._set_mask
         tag = line_addr >> self._set_bits
         line = self._sets[set_idx].find(tag)
@@ -142,6 +146,8 @@ class L2Cache:
         self._hbm.request(line_addr, now)
         evicted = self._sets[set_idx].install(
             tag=tag, dirty=True, origin_sm=sm_id,
+            requesting_stream_id=requesting_stream_id,
+            line_in_window_check=self._line_in_window,
         )
         way = next(i for i, ln in enumerate(self._sets[set_idx]._lines)
                     if ln.tag == tag and ln.valid)

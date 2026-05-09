@@ -492,6 +492,45 @@ class InstrExecutor:
         if op in ("barrier.cluster.arrive", "barrier.cluster.wait"):
             return
 
+        # Phase 5 cluster ops
+        if op == "mapa.shared::cluster":
+            src0 = instr.src[0]
+            src1 = instr.src[1]
+            smem_offset = t.get_u64(src0.name) if isinstance(src0, Reg) else int(src0.value)
+            rank = t.get_u32(src1.name) if isinstance(src1, Reg) else int(src1.value)
+            encoded = (int(rank) << 24) | (int(smem_offset) & 0xFFFFFF)
+            self._write(t, instr.dst[0], encoded, PtxType.u64)
+            return
+
+        if op.startswith("ld.shared::cluster.") or op.startswith("st.shared::cluster."):
+            src0 = instr.src[0]
+            base_addr = t.get_u64(src0.name) if isinstance(src0, Reg) else int(src0.value)
+            rank = (int(base_addr) >> 24) & 0xFF
+            offset = int(base_addr) & 0xFFFFFF
+            target_cta_id = self.cluster_id * self.cluster_size + rank
+            ty = instr.type
+            if op.startswith("ld."):
+                if ty is PtxType.f32:
+                    v = self.smem.load_f32(target_cta_id, offset)
+                elif ty in (PtxType.u32, PtxType.s32, PtxType.b32):
+                    v = self.smem.load_u32(target_cta_id, offset)
+                else:
+                    v = self.smem.load_u32(target_cta_id, offset)
+                self._write(t, instr.dst[0], v, ty)
+            else:
+                v = self._read(t, instr.src[1], ty)
+                if ty is PtxType.f32:
+                    self.smem.store_f32(target_cta_id, offset, float(v))
+                elif ty in (PtxType.u32, PtxType.s32, PtxType.b32):
+                    self.smem.store_u32(target_cta_id, offset, int(v))
+                else:
+                    self.smem.store_u32(target_cta_id, offset, int(v))
+            return
+
+        if op == "getctarank.u32":
+            self._write(t, instr.dst[0], self.cluster_rank, PtxType.u32)
+            return
+
         raise NotImplementedError(f"opcode {op!r}")
 
 

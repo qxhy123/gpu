@@ -115,6 +115,11 @@ class SM:
         # Propagate cluster barrier ref to sub_cores (for SubCore._is_ready)
         for sc in self._sub_cores:
             sc._device_cluster_barriers = self._device_cluster_barriers
+        # Initialise shared stream lookup (activate_cta populates it; SubCore reads it)
+        if not hasattr(self, "_current_cta_stream"):
+            self._current_cta_stream = {}
+        for sc in self._sub_cores:
+            sc._current_cta_stream = self._current_cta_stream
 
     def activate_cta(self, cta_id, ctaid_xyz, regs_per_thread, smem_per_cta,
                       threads_per_cta, warps_per_cta, cycle,
@@ -313,11 +318,13 @@ class SM:
                     w.stack.update_top_pc(pc + 1); w.stack.maybe_pop()
                     w.wgmma_pending_pc = -1
                 if self.recorder is not None:
+                    _cta_sid = self._current_cta_stream.get(cta_id, 0) if hasattr(self, "_current_cta_stream") else 0
                     self.recorder.instr_issue(
                         cycle=cycle, warp_id=non_done[0].warp_id,
                         pc=pc, op=instr.op,
                         src_loc=(instr.src_loc.file, instr.src_loc.line),
                         active_mask=non_done[0].fn_state.active_mask,
+                        stream_id=_cta_sid,
                     )
                     self.recorder.wgmma(
                         kind="ISSUE", cycle=cycle,
@@ -393,11 +400,13 @@ class SM:
                 w.stack.update_top_pc(pc + 1); w.stack.maybe_pop()
                 w.bulk_store_pending_pc = -1
             if self.recorder is not None:
+                _bs_sid = self._current_cta_stream.get(ws[0].cta_id, 0) if hasattr(self, "_current_cta_stream") else 0
                 self.recorder.instr_issue(
                     cycle=cycle, warp_id=ws[0].warp_id,
                     pc=pc, op=instr.op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=ws[0].fn_state.active_mask,
+                    stream_id=_bs_sid,
                 )
                 self.recorder.bulk_store(
                     kind="ISSUE", cycle=cycle,
@@ -405,6 +414,7 @@ class SM:
                     smem_src=smem_src, gmem_base=desc.gmem_base,
                     bytes_total=tx_bytes,
                     completion_at=completion_at,
+                    stream_id=_bs_sid,
                 )
 
     def run(self, kernel, grid, block, params, regs_per_thread: int = 16,

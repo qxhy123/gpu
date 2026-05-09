@@ -75,6 +75,12 @@ class SubCore:
         for w in self.warps:
             if w.stack is None:
                 w.stack = SIMTStack(warp_size=32, entry_pc=0)
+        # Stream-id lookup dict: shared reference to SM._current_cta_stream (set by SM)
+        self._current_cta_stream: dict = {}
+
+    def _lookup_stream_id(self, cta_id: int) -> int:
+        """Return the stream_id for the CTA that owns this warp (0 if unknown)."""
+        return self._current_cta_stream.get(cta_id, 0)
 
     def _is_ready(self, w: Warp, now: int) -> tuple[bool, StallReason]:
         if w.finished or w.stack is None or w.stack.is_done():
@@ -261,12 +267,14 @@ class SubCore:
     def _issue(self, w: Warp, instr: Instr, now: int,
                smem_conflict: int = 1, gmem_n_tx: int = 1) -> None:
         op = instr.op
+        sid = self._lookup_stream_id(w.cta_id)
         if op == "bar.sync":
             if self.recorder is not None:
                 self.recorder.instr_issue(
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=instr.op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                    stream_id=sid,
                 )
             w.barrier_pc = w.stack.top().pc
             return
@@ -276,6 +284,7 @@ class SubCore:
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=instr.op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                    stream_id=sid,
                 )
             target_pc = w.kernel.labels[instr.src[0]] if isinstance(instr.src[0], str) else 0
             if instr.pred is None:
@@ -308,6 +317,7 @@ class SubCore:
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=instr.op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask,
+                    stream_id=sid,
                 )
                 flops = 2 * spec.m * spec.n * spec.k
                 self.recorder.mma(
@@ -315,6 +325,7 @@ class SubCore:
                     precision=spec.dtype_a.value, shape_m=spec.m, shape_n=spec.n,
                     shape_k=spec.k, accum_dtype=spec.dtype_d.value,
                     flops_count=flops,
+                    stream_id=sid,
                 )
             latency = self.tc_cfg.tc_mma_latency
             if isinstance(dst, RegGroup):
@@ -328,6 +339,7 @@ class SubCore:
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                    stream_id=sid,
                 )
             w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return
@@ -342,6 +354,7 @@ class SubCore:
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                    stream_id=sid,
                 )
                 self.recorder.wgmma(
                     kind="COMMIT_GROUP", cycle=now,
@@ -357,6 +370,7 @@ class SubCore:
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                    stream_id=sid,
                 )
                 self.recorder.wgmma(
                     kind="WAIT_GROUP", cycle=now,
@@ -378,12 +392,14 @@ class SubCore:
                         warp_group_id=w.warp_group_id,
                         sm_id=getattr(self, "sm_id", -1),
                         pc=instr.pc, commit_group_id=gid,
+                        stream_id=sid,
                     )
             if self.recorder is not None:
                 self.recorder.instr_issue(
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                    stream_id=sid,
                 )
             w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return
@@ -396,11 +412,13 @@ class SubCore:
                     warp_group_id=w.warp_group_id,
                     sm_id=getattr(self, "sm_id", -1),
                     pc=instr.pc, wait_n=target_n,
+                    stream_id=sid,
                 )
                 self.recorder.instr_issue(
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                    stream_id=sid,
                 )
             w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return
@@ -426,6 +444,7 @@ class SubCore:
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                    stream_id=sid,
                 )
             w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return
@@ -485,6 +504,7 @@ class SubCore:
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                    stream_id=sid,
                 )
                 mbar_addr_for_rec = (
                     w.fn_state.threads[0].get_u64(mbar_reg.name) if mbar_reg is not None else 0
@@ -519,6 +539,7 @@ class SubCore:
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                    stream_id=sid,
                 )
                 self.recorder.mbarrier(
                     kind="INIT", cycle=now, cta_id=target_cta,
@@ -546,6 +567,7 @@ class SubCore:
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                    stream_id=sid,
                 )
                 bar = pool._barriers.get(mbar_addr) if pool else None
                 self.recorder.mbarrier(
@@ -602,11 +624,13 @@ class SubCore:
                     op=op_name, space="shared",
                     line_addr=int(addrs[0]) if addrs and addrs[0] >= 0 else 0,
                     latency=latency, n_lanes=sum(1 for a in addrs if a >= 0),
+                    stream_id=sid,
                 )
                 self.recorder.instr_issue(
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                    stream_id=sid,
                 )
             if is_atom and instr.dst:
                 w.scoreboard.mark_write(instr.dst[0].name, completion, origin="atomic")
@@ -665,11 +689,13 @@ class SubCore:
                         latency=completion - now,
                         n_lanes=sum(1 for lane in range(32)
                                     if (w.fn_state.active_mask >> lane) & 1),
+                        stream_id=sid,
                     )
                 self.recorder.instr_issue(
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                    stream_id=sid,
                 )
             if is_atom and instr.dst:
                 w.scoreboard.mark_write(instr.dst[0].name, completion, origin="atomic")
@@ -700,6 +726,7 @@ class SubCore:
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                    stream_id=sid,
                 )
                 bar = pool._barriers.get(mbar_addr) if pool else None
                 self.recorder.mbarrier(
@@ -717,6 +744,7 @@ class SubCore:
                 cycle=now, warp_id=w.warp_id, pc=instr.pc, op=instr.op,
                 src_loc=(instr.src_loc.file, instr.src_loc.line),
                 active_mask=w.fn_state.active_mask if w.fn_state else 0,
+                stream_id=sid,
             )
         w.fn_state.active_mask = w.stack.top().active_mask
         w.fn_state.pc = w.stack.top().pc
@@ -780,7 +808,7 @@ class SubCore:
                 self.recorder.gmem_access(
                     cycle=now, warp_id=w.warp_id,
                     n_transactions=info.n_transactions, efficiency=info.efficiency,
-                    addresses=addrs,
+                    addresses=addrs, stream_id=sid,
                 )
 
         # operand collector bank conflict

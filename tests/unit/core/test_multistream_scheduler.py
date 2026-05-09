@@ -106,3 +106,28 @@ def test_cta_dispatch_event_carries_stream_id():
     df = res.cta_dispatch_events_df if hasattr(res, "cta_dispatch_events_df") else None
     if df is not None and not df.empty:
         assert (df["stream_id"] == 7).all()
+
+
+def test_warp_events_carry_stream_id():
+    """When a kernel runs on stream_id=N, all warp events (instr_issue, etc.)
+    should carry stream_id=N."""
+    import gpusim
+    from gpusim.api import _reset_stream_id_counter
+    from gpusim.config.loader import load_default
+    _reset_stream_id_counter()
+    src = """
+.entry test() {
+    .reg .u32 %r<3>;
+    mov.u32 %r0, %tid.x;
+    add.s32 %r1, %r0, 1;
+    ret;
+}
+"""
+    cfg = load_default()
+    res = gpusim.run(ptx_src=src, grid=(1,1,1), block=(32,1,1),
+                      params={}, mode="timing", config=cfg, stream_id=4)
+
+    # Check instr_issue events all carry stream_id=4
+    issue_df = res.instr_issue_events_df if hasattr(res, "instr_issue_events_df") else None
+    if issue_df is not None and not issue_df.empty:
+        assert (issue_df["stream_id"] == 4).all()

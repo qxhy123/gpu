@@ -169,6 +169,11 @@ class Result:
         return bulk_store_events_dataframe(self._recorder) if self._recorder else None
 
     @property
+    def instr_issue_events_df(self):
+        from gpusim.viz.notebook import instr_issue_dataframe
+        return instr_issue_dataframe(self._recorder) if self._recorder else None
+
+    @property
     def device_metrics(self) -> dict:
         if self._recorder is None:
             return {}

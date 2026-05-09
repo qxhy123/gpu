@@ -137,7 +137,9 @@ def atomic_events_dataframe(rec):
 def instr_issue_dataframe(rec):
     import pandas as pd
     from dataclasses import asdict
-    events = getattr(rec, "instr_issue_events", None) or getattr(rec, "instr_issues", None)
+    raw = getattr(rec, "instr_issue_events", None) or getattr(rec, "instr_issues", None)
+    # instr_issues may be a callable method; call it if so
+    events = raw() if callable(raw) else raw
     if not events:
         return pd.DataFrame(columns=["op"])
     return pd.DataFrame([asdict(e) for e in events])

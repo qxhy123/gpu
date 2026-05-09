@@ -86,6 +86,12 @@ SUPPORTED_KERNELS = [
     "cluster_basic",
     "cluster_matmul_dsmem",
     "cluster_tma_pipeline",
+    # Phase 6 additions
+    "atom_histogram",
+    "atom_reduction_smem",
+    "cluster_cooperative_epilogue",
+    "atom_cas_spinlock",
+    "red_min_max",
 ]
 
 

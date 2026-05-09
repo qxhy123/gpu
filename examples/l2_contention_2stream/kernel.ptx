@@ -1,0 +1,23 @@
+// examples/l2_contention_2stream/kernel.ptx
+// Single writer kernel: each thread writes 1 to OUT[OFFSET + tid.x].
+// Two streams use the same kernel with different OFFSET values (0 and 32),
+// writing to adjacent regions of the same buffer — forcing shared L2 lines.
+.visible .entry writer(.param .u64 OUT, .param .u32 OFFSET)
+{
+    .reg .u64 %rd<4>;
+    .reg .u32 %r<6>;
+
+    ld.param.u64 %rd0, [OUT];
+    ld.param.u32 %r0, [OFFSET];
+
+    mov.u32 %r1, %tid.x;
+    add.u32 %r2, %r1, %r0;
+    shl.b32 %r3, %r2, 2;
+    cvt.u64.u32 %rd1, %r3;
+    add.u64 %rd2, %rd0, %rd1;
+
+    mov.u32 %r4, 1;
+    st.global.u32 [%rd2], %r4;
+
+    ret;
+}

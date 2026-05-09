@@ -1,0 +1,21 @@
+// examples/event_producer_consumer/kernel_read.ptx
+// Copy IN[tid.x] -> OUT[tid.x].
+.visible .entry read(.param .u64 IN, .param .u64 OUT)
+{
+    .reg .u64 %rd<6>;
+    .reg .u32 %r<4>;
+
+    ld.param.u64 %rd0, [IN];
+    ld.param.u64 %rd1, [OUT];
+
+    mov.u32 %r0, %tid.x;
+    shl.b32 %r1, %r0, 2;
+    cvt.u64.u32 %rd2, %r1;
+    add.u64 %rd3, %rd0, %rd2;
+    add.u64 %rd4, %rd1, %rd2;
+
+    ld.global.u32 %r2, [%rd3];
+    st.global.u32 [%rd4], %r2;
+
+    ret;
+}

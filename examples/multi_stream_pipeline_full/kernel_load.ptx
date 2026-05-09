@@ -1,0 +1,22 @@
+// examples/multi_stream_pipeline_full/kernel_load.ptx
+// Copy IN[tid.x] -> OUT[tid.x] (load stage).
+.visible .entry load(.param .u64 IN, .param .u64 OUT)
+{
+    .reg .u64 %rd<6>;
+    .reg .u32 %r<4>;
+    .reg .f32 %f<2>;
+
+    ld.param.u64 %rd0, [IN];
+    ld.param.u64 %rd1, [OUT];
+
+    mov.u32 %r0, %tid.x;
+    shl.b32 %r1, %r0, 2;
+    cvt.u64.u32 %rd2, %r1;
+
+    add.u64 %rd3, %rd0, %rd2;
+    ld.global.f32 %f0, [%rd3];
+    add.u64 %rd3, %rd1, %rd2;
+    st.global.f32 [%rd3], %f0;
+
+    ret;
+}

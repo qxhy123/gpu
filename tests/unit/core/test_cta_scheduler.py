@@ -62,3 +62,72 @@ def test_factory_dispatches_by_string():
     import pytest
     with pytest.raises(ValueError):
         make_cta_scheduler("bogus")
+
+
+def test_rr_peek_returns_k_sms():
+    from gpusim.core.scheduler import RRCtaScheduler
+    sched = RRCtaScheduler()
+    sms = [FakeSM(i) for i in range(4)]
+    result = sched.peek(sms, FakeOcc(), k=2)
+    assert result is not None
+    assert [sm.sm_id for sm in result] == [0, 1]
+
+
+def test_rr_peek_doesnt_advance_until_commit():
+    from gpusim.core.scheduler import RRCtaScheduler
+    sched = RRCtaScheduler()
+    sms = [FakeSM(i) for i in range(4)]
+    sched.peek(sms, FakeOcc(), k=2)
+    sched.peek(sms, FakeOcc(), k=2)
+    result = sched.peek(sms, FakeOcc(), k=2)
+    assert [sm.sm_id for sm in result] == [0, 1]
+
+
+def test_rr_peek_commit_advances():
+    from gpusim.core.scheduler import RRCtaScheduler
+    sched = RRCtaScheduler()
+    sms = [FakeSM(i) for i in range(4)]
+    sched.peek(sms, FakeOcc(), k=2); sched.commit(k=2)
+    result = sched.peek(sms, FakeOcc(), k=2)
+    assert [sm.sm_id for sm in result] == [2, 3]
+
+
+def test_rr_peek_returns_none_when_insufficient():
+    from gpusim.core.scheduler import RRCtaScheduler
+    sched = RRCtaScheduler()
+    sms = [FakeSM(0), FakeSM(1, capacity=0), FakeSM(2, capacity=0), FakeSM(3, capacity=0)]
+    result = sched.peek(sms, FakeOcc(), k=2)
+    assert result is None
+
+
+def test_greedy_peek_returns_k_least_loaded():
+    from gpusim.core.scheduler import GreedyCtaScheduler
+    sched = GreedyCtaScheduler()
+    sms = [FakeSM(0, n_warps=8), FakeSM(1, n_warps=2),
+           FakeSM(2, n_warps=16), FakeSM(3, n_warps=4)]
+    result = sched.peek(sms, FakeOcc(), k=2)
+    ids = sorted(sm.sm_id for sm in result)
+    assert ids == [1, 3]
+
+
+def test_greedy_commit_is_noop():
+    from gpusim.core.scheduler import GreedyCtaScheduler
+    sched = GreedyCtaScheduler()
+    sms = [FakeSM(i) for i in range(4)]
+    sched.peek(sms, FakeOcc(), k=2)
+    sched.commit(k=2)
+    result = sched.peek(sms, FakeOcc(), k=2)
+    assert len(result) == 2
+
+
+def test_pick_k1_equivalent_to_old_pick():
+    """For k=1 (Phase 4 default), peek+commit should behave like pick."""
+    from gpusim.core.scheduler import RRCtaScheduler
+    sched = RRCtaScheduler()
+    sms = [FakeSM(i) for i in range(4)]
+    picks = []
+    for _ in range(8):
+        result = sched.peek(sms, FakeOcc(), k=1)
+        sched.commit(k=1)
+        picks.append(result[0].sm_id)
+    assert picks == [0, 1, 2, 3, 0, 1, 2, 3]

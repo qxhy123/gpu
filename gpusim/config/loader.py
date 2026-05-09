@@ -34,8 +34,9 @@ def _from_dict(d: dict) -> DeviceConfig:
         cache = CacheConfig(**(d.get("cache") or {}))
         hbm = HBMConfig(**(d.get("hbm") or {}))
         n_sm = device_d.get("n_sm", 8)
-        return DeviceConfig(n_sm=n_sm, sm=sm_cfg, cache=cache, hbm=hbm,
-                             scheduler=scheduler)
+        cluster_size = device_d.get("cluster_size", 1)
+        return DeviceConfig(n_sm=n_sm, cluster_size=cluster_size,
+                             sm=sm_cfg, cache=cache, hbm=hbm, scheduler=scheduler)
 
     # Legacy
     if has_sm_node:

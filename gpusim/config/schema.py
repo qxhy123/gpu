@@ -87,6 +87,7 @@ class CtaSchedulerConfig:
 @dataclass
 class DeviceConfig:
     n_sm: int = 8
+    cluster_size: int = 1                # NEW (Phase 5)
     sm: SMConfig = field(default_factory=SMConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     hbm: HBMConfig = field(default_factory=HBMConfig)

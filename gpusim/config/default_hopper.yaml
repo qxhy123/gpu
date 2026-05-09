@@ -1,5 +1,6 @@
 device:
   n_sm: 8
+  cluster_size: 1
   scheduler:
     cta_policy: rr
 

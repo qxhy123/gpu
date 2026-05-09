@@ -379,6 +379,16 @@ class Event:
         return (self.signaled_at_cycle is not None
                 and self.signaled_at_cycle <= current_cycle)
 
+    @staticmethod
+    def elapsed_time(start: "Event", end: "Event") -> int:
+        """Cycles between two signaled events. Both must be signaled.
+        Returns int (cycles) — discrete, mirrors cudaEventElapsedTime concept."""
+        if start.signaled_at_cycle is None:
+            raise RuntimeError(f"start event {start.event_id} not signaled")
+        if end.signaled_at_cycle is None:
+            raise RuntimeError(f"end event {end.event_id} not signaled")
+        return end.signaled_at_cycle - start.signaled_at_cycle
+
 
 @dataclass
 class _RecordMarker:
@@ -447,6 +457,11 @@ class Stream:
     def wait(self, ev: Event) -> None:
         """Block this stream's future launches until ev is signaled."""
         self.event_waits.append(ev)
+
+    def wait_all(self, events: list) -> None:
+        """Block this stream's future launches until ALL events are signaled."""
+        for ev in events:
+            self.event_waits.append(ev)
 
     def is_idle(self) -> bool:
         return self.inflight is None and not self.pending

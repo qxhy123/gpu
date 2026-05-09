@@ -76,7 +76,7 @@ class Device:
         from gpusim.core.cluster import ClusterBarrierPool
         cluster_barriers: dict[int, ClusterBarrierPool] = {}
         for sm in sms:
-            sm._device_cluster_barriers = cluster_barriers
+            sm.set_cluster_barriers(cluster_barriers)
 
         def _try_dispatch():
             nonlocal cta_pointer

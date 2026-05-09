@@ -61,12 +61,19 @@ class SM:
         self._wgmma_queues: dict = {}
         self._mbarrier_pools: dict = {}
         self._tma_descriptor_pool = None
+        self._device_cluster_barriers = {}
 
     def can_admit_cta(self, occ) -> bool:
         return len(self._active_cta_ids) < occ.active_ctas
 
     def active_warp_count(self) -> int:
         return sum(1 for w in self._active_warps if not w.finished)
+
+    def set_cluster_barriers(self, cluster_barriers: dict):
+        self._device_cluster_barriers = cluster_barriers
+        if hasattr(self, "_sub_cores") and self._sub_cores:
+            for sc in self._sub_cores:
+                sc._device_cluster_barriers = cluster_barriers
 
     def initialize_for_run(self, kernel, gmem, smem, paramspace, grid, block,
                             occupancy, cluster_size: int = 1):
@@ -105,6 +112,9 @@ class SM:
                 hbm=self.hbm,
             )
             self._sub_cores.append(sc)
+        # Propagate cluster barrier ref to sub_cores (for SubCore._is_ready)
+        for sc in self._sub_cores:
+            sc._device_cluster_barriers = self._device_cluster_barriers
 
     def activate_cta(self, cta_id, ctaid_xyz, regs_per_thread, smem_per_cta,
                       threads_per_cta, warps_per_cta, cycle,
@@ -170,9 +180,48 @@ class SM:
         for cid, ws in by_cta.items():
             non_done = [w for w in ws if not w.finished]
             if non_done and all(w.barrier_pc >= 0 for w in non_done):
-                for w in non_done:
-                    w.stack.update_top_pc(w.barrier_pc + 1); w.stack.maybe_pop()
-                    w.barrier_pc = -1
+                instr = non_done[0].kernel.instrs[non_done[0].barrier_pc]
+                if instr.op == "barrier.cluster.arrive":
+                    cluster_id = non_done[0].cluster_id
+                    rank = non_done[0].cluster_rank
+                    pool = self._device_cluster_barriers.get(cluster_id)
+                    if pool is not None:
+                        pool.arrive(rank)
+                    if (self.recorder is not None
+                            and hasattr(self.recorder, "cluster_barrier")):
+                        self.recorder.cluster_barrier(
+                            kind="ARRIVE", cycle=cycle,
+                            cluster_id=cluster_id, cta_id=cid,
+                            rank=rank, sm_id=self.sm_id,
+                            arrived_count=bin(pool.arrived_mask).count("1") if pool else 0,
+                        )
+                    for w in non_done:
+                        w.stack.update_top_pc(w.barrier_pc + 1); w.stack.maybe_pop()
+                        w.barrier_pc = -1
+                else:
+                    # bar.sync existing path
+                    for w in non_done:
+                        w.stack.update_top_pc(w.barrier_pc + 1); w.stack.maybe_pop()
+                        w.barrier_pc = -1
+
+        # Phase 5: check cluster barrier waits
+        for w in self._active_warps:
+            if w.cluster_barrier_wait_pc >= 0:
+                pool = self._device_cluster_barriers.get(w.cluster_id)
+                if pool is None:
+                    continue
+                if pool.is_released(w.cluster_barrier_phase_at_wait):
+                    w.stack.update_top_pc(w.cluster_barrier_wait_pc + 1)
+                    w.stack.maybe_pop()
+                    w.cluster_barrier_wait_pc = -1
+                    if (self.recorder is not None
+                            and hasattr(self.recorder, "cluster_barrier")):
+                        self.recorder.cluster_barrier(
+                            kind="WAIT_RELEASE", cycle=cycle,
+                            cluster_id=w.cluster_id,
+                            cta_id=w.cta_id, rank=w.cluster_rank,
+                            sm_id=self.sm_id,
+                        )
 
         # warp-group wgmma sync coordination
         self._wgmma_coordinate(cycle)

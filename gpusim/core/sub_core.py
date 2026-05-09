@@ -81,11 +81,29 @@ class SubCore:
             return False, StallReason.IDLE
         if w.barrier_pc >= 0:
             return False, StallReason.BARRIER
+        if w.cluster_barrier_wait_pc >= 0:
+            return False, StallReason.CLUSTER_BARRIER_WAIT
         pc = w.stack.top().pc
         if pc >= len(w.kernel.instrs):
             w.finished = True
             return False, StallReason.IDLE
         instr = w.kernel.instrs[pc]
+
+        if instr.op == "barrier.cluster.arrive":
+            if w.barrier_pc < 0:
+                # Snapshot the current pool phase (before the arrive flip) so
+                # barrier.cluster.wait can release when the phase changes.
+                pool = getattr(self, "_device_cluster_barriers", {}).get(w.cluster_id)
+                w.cluster_barrier_phase_at_wait = pool.phase if pool else 0
+                w.barrier_pc = pc
+            return False, StallReason.BARRIER
+
+        if instr.op == "barrier.cluster.wait":
+            if w.cluster_barrier_wait_pc < 0:
+                # phase snapshot was already captured at arrive time
+                w.cluster_barrier_wait_pc = pc
+            return False, StallReason.CLUSTER_BARRIER_WAIT
+
         # bar.sync must drain the LSU (shared mem conflict cycles must complete)
         if instr.op == "bar.sync":
             if not self.fus.is_free(FUKind.LSU, now):

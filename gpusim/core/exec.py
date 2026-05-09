@@ -488,6 +488,10 @@ class InstrExecutor:
             # mbarrier.try_wait writes a pred result; that's done at SubCore level.
             return
 
+        # barrier.cluster.{arrive,wait} — timing handled at SubCore/_is_ready + SM.step_cycle
+        if op in ("barrier.cluster.arrive", "barrier.cluster.wait"):
+            return
+
         raise NotImplementedError(f"opcode {op!r}")
 
 

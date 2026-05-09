@@ -47,6 +47,10 @@ python examples/vector_add/run.py
 - **Per-cycle scheduler + real overlap** — `Device.run_streams` per-cycle main loop with actual cross-grid CTA interleave; `actual_cross_grid_overlap_cycles` metric — `examples/phase8_overlap_real/` + Chapter 37
 - **Multi-event fan-in** — `Stream.wait_all([events])` AND-semantics barrier for multiple upstream dependencies — `examples/multi_event_fan_in/` + Chapter 38
 - **Event timing benchmark** — `Event.elapsed_time(start, end)` cycle-delta profiling utility; `l2_eviction_protected_count` metric — `examples/event_timing_benchmark/` + Chapter 39
+- **Multi-GPU system setup** — `cfg.n_gpus` configurable, `MultiGpuSystem` wrapping N GPUs sharing `NvlinkFabric`, point-to-point NVLink links — `examples/multi_gpu_setup/` + Chapter 40
+- **Ring allreduce** — bandwidth-optimal ring algorithm for large messages, `nvlink_bandwidth_utilization` + `per_rank_communication_volume` metrics — `examples/ring_allreduce/` + Chapter 41
+- **Tree allreduce** — latency-optimal tree algorithm for small messages, `algo_efficiency_ring_vs_tree` metric, auto-pick at 4096-byte threshold — `examples/tree_allreduce/` + Chapter 42
+- **DDP training step** — end-to-end allreduce + broadcast pipeline mimicking DistributedDataParallel gradient sync, `collective_op_breakdown` metric — `examples/ddp_training_step/` + Chapter 43
 
 ## Run a kernel and inspect the report
 ```bash
@@ -118,8 +122,8 @@ gpusim run examples/vector_add/kernel.ptx \
     --mode timing \
     --output report.html --perfetto trace.json
 ```
-- `report.html` — open in any browser; Phase 3 adds §11 Tensor Core、§12 wgmma、§13 TMA、§14 Barrier sections; Phase 4 adds §15–§18 (CTA dispatch、L2 MSHR、bulk-store overlap、per-SM utilization); Phase 5 adds §19–§20 (cluster dispatch、cluster barrier stats); Phase 6 adds §21 Atomic Operations、§22 Cooperative Epilogue; Phase 7 adds §27 Stream Concurrency、§28 Per-Stream Breakdown; Phase 8 adds §29 Cross-Stream Concurrency Gain、§30 Priority Dispatch、§31 Event/L2-Window Stats; Phase 9 adds §32 Actual Overlap Cycles + L2 Eviction Protection
-- `trace.json` — drag into https://ui.perfetto.dev; Phase 3 adds TC / TMA / Barrier tracks; Phase 4 adds per-SM swimlane; Phase 5 adds cluster swimlane; Phase 6 adds Atomic track (AtomicEvent per-line FIFO serialization); Phase 7 adds Stream-N swimlanes (one per stream_id); Phase 8 adds StreamEvent annotations (record/wait markers per stream with cycle timestamps); Phase 9 adds Perfetto async arrows for record→wait event flow
+- `report.html` — open in any browser; Phase 3 adds §11 Tensor Core、§12 wgmma、§13 TMA、§14 Barrier sections; Phase 4 adds §15–§18 (CTA dispatch、L2 MSHR、bulk-store overlap、per-SM utilization); Phase 5 adds §19–§20 (cluster dispatch、cluster barrier stats); Phase 6 adds §21 Atomic Operations、§22 Cooperative Epilogue; Phase 7 adds §27 Stream Concurrency、§28 Per-Stream Breakdown; Phase 8 adds §29 Cross-Stream Concurrency Gain、§30 Priority Dispatch、§31 Event/L2-Window Stats; Phase 9 adds §32 Actual Overlap Cycles + L2 Eviction Protection; Phase 10 adds §33 NVLink Bandwidth + §34 Collective Operations
+- `trace.json` — drag into https://ui.perfetto.dev; Phase 3 adds TC / TMA / Barrier tracks; Phase 4 adds per-SM swimlane; Phase 5 adds cluster swimlane; Phase 6 adds Atomic track (AtomicEvent per-line FIFO serialization); Phase 7 adds Stream-N swimlanes (one per stream_id); Phase 8 adds StreamEvent annotations (record/wait markers per stream with cycle timestamps); Phase 9 adds Perfetto async arrows for record→wait event flow; Phase 10 adds NVLink swimlane (per GPU→GPU link) + Collective swimlane (per rank)
 
 ## What's modeled
 
@@ -136,7 +140,8 @@ gpusim run examples/vector_add/kernel.ptx \
 | 7 | ✅ done | Multi-stream API (Stream/launch/synchronize), 4 stream metrics, KernelLaunch trace, §27/§28 HTML, Stream-N Perfetto swimlanes |
 | 8 | ✅ done | True concurrent scheduler (ConcurrentStreamScheduler), stream priority (4:2:1 weights), CUDA Events, L2 set-window API, 6 metrics, §29/§30/§31 HTML, StreamEvent Perfetto |
 | 9 | ✅ done | Per-cycle Device.run_streams, L2 eviction window protection, Stream.wait_all, Event.elapsed_time, 2 metrics, §32 HTML, Perfetto async arrows, 3 examples (36–38), tutorials 37–39 |
-| 10+ | future | Warp shuffle, ITS, full per-cycle CTA slicing (grid-level interleave), multi-GPU |
+| 10 | ✅ done | Multi-GPU (cfg.n_gpus), MultiGpuSystem, NVLink fabric, Comm (NCCL-equivalent): ring + tree allreduce, broadcast, allgather; 4 metrics, 2 trace events, §33/§34 HTML, Perfetto NVLink + Collective swimlanes, 4 examples (39–42), tutorials 40–43 |
+| 11+ | future | Warp shuffle, ITS, full per-cycle CTA slicing (grid-level interleave) |
 
 ### Phase 1 ✅ — SIMT 基础
 Single SM, cycle-approximate, Hopper-shaped. PTX subset (~30 ops). Shared memory bank conflicts, global memory coalescing, regfile bank conflicts, multi-CTA occupancy.
@@ -165,8 +170,11 @@ Single SM, cycle-approximate, Hopper-shaped. PTX subset (~30 ops). Shared memory
 ### Phase 9 ✅ — Per-Cycle Scheduler + L2 Eviction + Multi-Event Wait + Event Timing
 **Per-cycle Device.run_streams main loop (M1):** `Device.run_streams` rewritten as a per-cycle tick loop — each cycle it checks all streams for ready CTAs and dispatches them in weighted round-robin order, enabling true cross-grid CTA interleave. `actual_cross_grid_overlap_cycles` metric counts cycles where CTAs from ≥ 2 grids are simultaneously in-flight. (Full per-cycle CTA slicing of individual `Device.run` calls is Phase 10+.) **L2 eviction integration (M2):** `CacheSet.install` now enforces window-protection: lines belonging to a stream's L2 window are shielded from eviction by other streams' accesses. `GmemEvent` gains `hit` and `in_window` boolean fields, wiring the per-access data needed to compute `l2_window_hit_rate` correctly. **Stream.wait_all (M3):** `Stream.wait_all(events: list[Event])` provides AND-semantics fan-in — the stream stalls until every event in the list has been recorded, enabling multi-producer → single-consumer patterns. **Event.elapsed_time (M3):** `Event.elapsed_time(start_event, end_event)` static utility returns the cycle delta between two recorded events, mirroring `cudaEventElapsedTime`. **2 new metrics:** `actual_cross_grid_overlap_cycles` (int, cycles of real cross-grid concurrency), `l2_eviction_protected_count` (int, cache-line installs protected by window). **HTML §32** — Combined Overlap section: actual overlap cycles vs. estimated, L2 eviction protection count. **Perfetto async arrows** for record→wait flow: each `Stream.record` / `Stream.wait` pair generates a Perfetto async slice so the event dependency is visible as an arrow in the trace viewer. **3 new examples** (36–38): `phase8_overlap_real`, `multi_event_fan_in`, `event_timing_benchmark`. **3 new tutorial chapters** (37–39). **100% backward compatible:** Phase 1–8 APIs unchanged.
 
+### Phase 10 ✅ — Multi-GPU + NVLink + NCCL-equivalent Collectives
+**cfg.n_gpus configurable (default 1 = backward compatible):** `DeviceConfig.n_gpus` sets the number of simulated GPUs; existing single-GPU code requires no changes. **MultiGpuSystem:** wraps N `GPU` instances sharing a single `NvlinkFabric`, providing `.run_all()` for multi-GPU kernel dispatch. **NVLink fabric:** point-to-point links modeled with per-link bandwidth + latency; `NvlinkFabric.build_all_to_all(n_gpus)` constructs the default fully-connected topology. **Comm class (NCCL-equivalent):** `Comm(gpus, fabric)` carries `rank` + `world_size`; exposes `allreduce(buf, op)`, `broadcast(buf, root)`, `allgather(sendbuf) → recvbuf`. **Allreduce algorithms:** ring (bandwidth-optimal, large messages) and tree (latency-optimal, small messages) with auto-pick at the 4096-byte threshold; selectable via `algo='ring'|'tree'|'auto'`. **4 new metrics:** `nvlink_bandwidth_utilization`, `collective_op_breakdown`, `algo_efficiency_ring_vs_tree`, `per_rank_communication_volume`. **2 new trace events:** `NvlinkTransfer` (src_gpu, dst_gpu, nbytes, start_cycle, end_cycle) + `CollectiveOp` (op, algo, world_size, nbytes, start_cycle, end_cycle). **HTML report adds §33** (NVLink Bandwidth — per-link utilization + transfer timeline) **and §34** (Collective Operations — op breakdown, algo efficiency, per-rank volume). **Perfetto adds NVLink swimlane** (one track per GPU→GPU link showing NvlinkTransfer slices) **and Collective swimlane** (one track per rank showing CollectiveOp slices). **4 new examples (39–42):** `multi_gpu_setup`, `ring_allreduce`, `tree_allreduce`, `ddp_training_step`. **4 new tutorial chapters (40–43). 100% backward compatible:** Phase 1–9 APIs unchanged.
+
 ## What's NOT modeled
-Warp shuffle, ITS, full per-cycle CTA slicing of individual grid execution (Phase 9 M1 adds cross-grid interleave; intra-grid slicing is Phase 10+), multi-GPU. See `docs/superpowers/specs/2026-05-07-gpusim-phase1-design.md` section 11.
+Warp shuffle, ITS, full per-cycle CTA slicing of individual grid execution (Phase 9 M1 adds cross-grid interleave; intra-grid slicing is Phase 11+). See `docs/superpowers/specs/2026-05-07-gpusim-phase1-design.md` section 11.
 
 ## Tutorial
 Read `docs/tutorial/00-intro.md` first.
@@ -213,3 +221,7 @@ Read `docs/tutorial/00-intro.md` first.
 | **37** | **Per-cycle 调度器与真实重叠 — Device.run_streams 逐周期主循环 + actual_cross_grid_overlap_cycles** |
 | **38** | **多事件 fan-in — Stream.wait_all AND 语义屏障** |
 | **39** | **Event 计时与性能分析 — Event.elapsed_time 周期差 + l2_eviction_protected_count** |
+| **40** | **Multi-GPU 系统搭建 — cfg.n_gpus + MultiGpuSystem + NvlinkFabric 点对点拓扑** |
+| **41** | **Ring Allreduce — 带宽最优环形算法 + nvlink_bandwidth_utilization + per_rank_communication_volume** |
+| **42** | **Tree Allreduce — 延迟最优树形算法 + algo_efficiency_ring_vs_tree + 4096 字节自动选择阈值** |
+| **43** | **DDP 训练步骤 — allreduce + broadcast 梯度同步流水线 + collective_op_breakdown** |

@@ -1,0 +1,18 @@
+.entry test(.param .u64 OUT, .param .u32 N_BINS)
+{
+    .reg .u64 %rd<4>;
+    .reg .u32 %r<8>;
+
+    ld.param.u64 %rd0, [OUT];
+
+    mov.u32 %r1, %tid.x;
+    and.b32 %r2, %r1, 15;
+    mul.lo.s32 %r3, %r2, 4;
+    cvt.u64.u32 %rd1, %r3;
+    add.u64 %rd2, %rd0, %rd1;
+
+    mov.u32 %r4, 1;
+    atom.global.add.u32 %r5, [%rd2], %r4;
+
+    ret;
+}

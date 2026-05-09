@@ -23,6 +23,7 @@ class StallReason(Enum):
     L2_MSHR_FULL = "L2_MSHR_FULL"
     BULK_STORE_QUEUE_FULL = "BULK_STORE_QUEUE_FULL"
     BULK_STORE_WAIT = "BULK_STORE_WAIT"
+    CLUSTER_BARRIER_WAIT = "CLUSTER_BARRIER_WAIT"
 
 
 @dataclass
@@ -47,6 +48,11 @@ class Warp:
     _l2_mshr_full_stall: bool = False
     _bulk_store_queue_full_stall: bool = False
     _bulk_store_wait_stall: bool = False
+    cluster_id: int = -1
+    cluster_rank: int = -1
+    cluster_barrier_arrived: bool = False
+    cluster_barrier_wait_pc: int = -1
+    cluster_barrier_phase_at_wait: int = -1
 
     @property
     def warp_group_id(self) -> int:

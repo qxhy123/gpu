@@ -59,3 +59,18 @@ def test_phase4_stall_tokens_and_pending_pc():
     assert StallReason.BULK_STORE_WAIT.value == "BULK_STORE_WAIT"
     w = Warp(warp_id=0, kernel=None)
     assert w.bulk_store_pending_pc == -1
+
+
+def test_phase5_warp_cluster_fields_default():
+    from gpusim.core.warp import Warp
+    w = Warp(warp_id=0, kernel=None)
+    assert w.cluster_id == -1
+    assert w.cluster_rank == -1
+    assert w.cluster_barrier_arrived is False
+    assert w.cluster_barrier_wait_pc == -1
+    assert w.cluster_barrier_phase_at_wait == -1
+
+
+def test_phase5_cluster_barrier_wait_stall_token():
+    from gpusim.core.warp import StallReason
+    assert StallReason.CLUSTER_BARRIER_WAIT.value == "CLUSTER_BARRIER_WAIT"

@@ -42,3 +42,30 @@ def test_result_has_stream_id_default_zero():
     res = gpusim.run(ptx_src=src, grid=(1,1,1), block=(32,1,1),
                       params={}, mode="timing")
     assert res.stream_id == 0
+
+
+def test_synchronize_drains_two_streams():
+    import gpusim
+    from gpusim.api import Stream, _reset_stream_id_counter
+    from gpusim.config.loader import load_default
+    _reset_stream_id_counter()
+    src = """
+.entry test() {
+    .reg .u32 %r0;
+    mov.u32 %r0, %tid.x;
+    ret;
+}
+"""
+    cfg = load_default()
+    s0 = Stream()
+    s1 = Stream()
+    s0.launch(ptx_src=src, grid=(1,1,1), block=(32,1,1), params={}, kernel_name="k0",
+              config=cfg)
+    s1.launch(ptx_src=src, grid=(1,1,1), block=(32,1,1), params={}, kernel_name="k1",
+              config=cfg)
+    multi_res = gpusim.synchronize(streams=[s0, s1], config=cfg)
+    assert 0 in multi_res.streams and 1 in multi_res.streams
+    assert len(multi_res.streams[0]) == 1
+    assert len(multi_res.streams[1]) == 1
+    assert multi_res.streams[0][0].stream_id == 0
+    assert multi_res.streams[1][0].stream_id == 1

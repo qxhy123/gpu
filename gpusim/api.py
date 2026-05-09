@@ -399,3 +399,21 @@ class MultiStreamResult:
     streams: dict             # int -> list[Result]
     total_cycles: int = 0
     _recorder: object | None = None
+
+
+def synchronize(streams: list = None, *, config=None) -> "MultiStreamResult":
+    """Drain all given streams; return aggregated MultiStreamResult.
+
+    Args:
+        streams: list of Stream objects to drain. Required.
+        config: device Config; if None, attempts to use load_default().
+    """
+    if streams is None or len(streams) == 0:
+        raise ValueError("synchronize() requires at least one Stream")
+    if config is None:
+        from gpusim.config.loader import load_default
+        config = load_default()
+
+    from gpusim.core.device import Device
+    d = Device(config)
+    return d.run_streams(streams)

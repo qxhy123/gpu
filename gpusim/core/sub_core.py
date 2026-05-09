@@ -585,14 +585,14 @@ class SubCore:
             from gpusim.core.smem import bank_conflict_degree
             from gpusim.core.exec import shared_addresses_for_warp
             addrs = shared_addresses_for_warp(w.fn_state, instr)
-            bank_conflict = bank_conflict_degree(
+            smem_conflict = bank_conflict_degree(
                 addrs, active_mask=w.fn_state.active_mask, banks=self.cfg.smem_banks,
             )
-            cache_cfg = (getattr(self.cfg, "_cache_for_run", None)
-                         or getattr(self.cfg, "cache", None))
-            atomic_extra = (getattr(cache_cfg, "smem_atomic_op_extra_latency", 4)
-                            if cache_cfg else 4)
-            latency = self.cfg.fu.smem_latency + bank_conflict * atomic_extra
+            _cache_cfg = (getattr(self.cfg, "_cache_for_run", None)
+                          or getattr(self.cfg, "cache", None))
+            atomic_extra = (getattr(_cache_cfg, "smem_atomic_op_extra_latency", 4)
+                            if _cache_cfg else 4)
+            latency = self.cfg.fu.smem_latency + smem_conflict * atomic_extra
             completion = now + latency
             # Trace
             if self.recorder is not None:
@@ -606,7 +606,7 @@ class SubCore:
                 self.recorder.instr_issue(
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
-                    active_mask=w.fn_state.active_mask,
+                    active_mask=w.fn_state.active_mask if w.fn_state else 0,
                 )
             if is_atom and instr.dst:
                 w.scoreboard.mark_write(instr.dst[0].name, completion, origin="atomic")

@@ -52,7 +52,8 @@ class Device:
         sms = []
         for i in range(self.n_sm):
             sm = SM(self.cfg.sm, sm_id=i, recorder=self.recorder, l2=l2, hbm=hbm)
-            sm.initialize_for_run(kernel, gmem, smem, paramspace, grid, block, occ)
+            sm.initialize_for_run(kernel, gmem, smem, paramspace, grid, block, occ,
+                                    cluster_size=self.cfg.cluster_size)
             sms.append(sm)
 
         cta_queue = []
@@ -61,28 +62,60 @@ class Device:
                 for cx in range(grid[0]):
                     cid = cx + cy * grid[0] + cz * grid[0] * grid[1]
                     cta_queue.append((cid, (cx, cy, cz)))
+        cluster_size = self.cfg.cluster_size
+        grid_size = grid[0] * grid[1] * grid[2]
+        if cluster_size > 1 and grid_size % cluster_size != 0:
+            raise ValueError(
+                f"cluster_size ({cluster_size}) must divide grid_size ({grid_size})"
+            )
+
         scheduler = make_cta_scheduler(self.cfg.scheduler.cta_policy)
         cycle = 0
         cta_pointer = 0
 
+        from gpusim.core.cluster import ClusterBarrierPool
+        cluster_barriers: dict[int, ClusterBarrierPool] = {}
+        for sm in sms:
+            sm._device_cluster_barriers = cluster_barriers
+
         def _try_dispatch():
             nonlocal cta_pointer
             while cta_pointer < len(cta_queue):
-                target_sm = scheduler.pick(sms, occ)
-                if target_sm is None:
+                target_sms = scheduler.peek(sms, occ, k=cluster_size)
+                if target_sms is None:
                     return
-                cid, ctaid_xyz = cta_queue[cta_pointer]
-                target_sm.activate_cta(
-                    cid, ctaid_xyz, regs_per_thread, smem_per_cta,
-                    threads_per_cta, warps_per_cta, cycle,
-                )
-                if self.recorder is not None:
-                    self.recorder.cta_dispatch(
-                        cycle=cycle, cta_id=cid, sm_id=target_sm.sm_id,
-                        queue_position=cta_pointer,
-                        active_warps_at_dispatch=target_sm.active_warp_count(),
+                scheduler.commit(k=cluster_size)
+                cluster_id = cta_pointer // cluster_size
+                if cluster_size > 1:
+                    cluster_barriers[cluster_id] = ClusterBarrierPool(
+                        expected=cluster_size,
                     )
-                cta_pointer += 1
+                for i, sm in enumerate(target_sms):
+                    cid, ctaid_xyz = cta_queue[cta_pointer + i]
+                    sm.activate_cta(
+                        cid, ctaid_xyz, regs_per_thread, smem_per_cta,
+                        threads_per_cta, warps_per_cta, cycle,
+                        cluster_id=cluster_id if cluster_size > 1 else -1,
+                        cluster_rank=i if cluster_size > 1 else -1,
+                    )
+                    if self.recorder is not None:
+                        self.recorder.cta_dispatch(
+                            cycle=cycle, cta_id=cid, sm_id=sm.sm_id,
+                            queue_position=cta_pointer + i,
+                            active_warps_at_dispatch=sm.active_warp_count(),
+                        )
+                # Phase 5 cluster_dispatch event will be added in T19; skip if recorder lacks
+                if cluster_size > 1 and self.recorder is not None:
+                    if hasattr(self.recorder, "cluster_dispatch"):
+                        self.recorder.cluster_dispatch(
+                            cycle=cycle, cluster_id=cluster_id,
+                            cluster_size=cluster_size,
+                            sm_ids=tuple(sm.sm_id for sm in target_sms),
+                            cta_ids=tuple(cta_queue[cta_pointer + i][0]
+                                            for i in range(cluster_size)),
+                            queue_position=cluster_id,
+                        )
+                cta_pointer += cluster_size
         _try_dispatch()
 
         while True:

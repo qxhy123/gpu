@@ -65,3 +65,12 @@ def test_tensor_core_config_default():
     assert cfg.tensor_core.tc_wgmma_latency == 32
     assert cfg.tensor_core.tc_wgmma_occupancy == 4
     assert cfg.tensor_core.wgmma_queue_capacity == 16
+
+
+def test_classify_atom_to_lsu():
+    from gpusim.core.functional_units import FUSet, FUKind
+    from gpusim.config.schema import FUConfig
+    fus = FUSet(FUConfig())
+    assert fus.classify("atom.global.add.u32") is FUKind.LSU
+    assert fus.classify("atom.shared.cas.u32") is FUKind.LSU
+    assert fus.classify("red.global.max.f32") is FUKind.LSU

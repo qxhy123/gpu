@@ -20,6 +20,8 @@ class FUSet:
         self._issue_free_at: dict[FUKind, int] = {k: 0 for k in FUKind}
 
     def classify(self, op: str) -> FUKind:
+        if op.startswith("atom.") or op.startswith("red."):
+            return FUKind.LSU
         if op.startswith("mma.sync.") or op.startswith("wgmma.mma_async."):
             return FUKind.TC
         if op.startswith("wgmma."):

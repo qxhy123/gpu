@@ -1,0 +1,92 @@
+// examples/cluster_cooperative_epilogue/kernel.ptx
+//
+// 4-CTA cluster cooperative epilogue demo.
+//
+// Each CTA fills its shared memory with rank-tagged data: smem[i] = rank*1000 + i.
+// CTA 0 thread 0 then issues 4 cluster TMA stores, each reading from a different
+// CTA's smem (via cluster pointer encoding) and writing to a different gmem offset.
+//
+// Final result: OUT[r*32 + i] = r*1000 + i  for r in 0..3, i in 0..31
+//
+// Grid:  (4, 1, 1)  — 4 CTAs, one per cluster rank
+// Block: (32, 1, 1) — 32 threads per CTA
+// Params: OUT (u32[128])
+//
+// Smem layout (per CTA):
+//   offset 0..127: smem_D[32] (32 × u32 = 128 bytes, filled by all threads)
+//
+// Cluster pointer encoding: (rank << 24) | smem_byte_offset
+
+.entry test(.param .u64 OUT)
+{
+    .reg .u64 %rd<8>;
+    .reg .u32 %r<8>;
+    .reg .u32 %rrank;
+    .reg .pred %p0;
+
+    ld.param.u64 %rd0, [OUT];
+
+    mov.u32 %r0, %tid.x;          // r0 = thread id (0..31)
+    getctarank.u32 %rrank;        // rrank = CTA cluster rank (0..3)
+
+    // === Each CTA fills its smem: smem_D[tid] = rank*1000 + tid ===
+    // smem_D starts at byte offset 0
+    // Each thread writes one u32: byte offset = tid * 4
+    mul.lo.s32 %r1, %r0, 4;      // r1 = tid * 4 (byte offset into smem)
+    cvt.u64.u32 %rd1, %r1;       // rd1 = (u64)(byte offset)
+
+    mul.lo.s32 %r2, %rrank, 1000; // r2 = rank * 1000
+    add.s32 %r3, %r2, %r0;       // r3 = rank*1000 + tid (value to store)
+
+    st.shared.u32 [%rd1], %r3;   // smem_D[tid] = rank*1000 + tid
+
+    // === Cluster synchronization: all CTAs have filled their smem ===
+    bar.sync 0;
+    barrier.cluster.arrive;
+    barrier.cluster.wait;
+
+    // === CTA 0 thread 0 only: issue 4 cluster TMA stores ===
+    setp.ne.u32 %p0, %rrank, 0;
+    @%p0 bra END;
+    setp.ne.u32 %p0, %r0, 0;
+    @%p0 bra END;
+
+    // For each rank r (0..3):
+    //   smem_src cluster encoding: (r << 24) | 0  (offset 0 within that CTA's smem)
+    //   gmem dst: OUT + r*128  (each CTA's 32 u32 elements = 128 bytes)
+
+    // --- Rank 0: cluster encoding (0 << 24) | 0 = 0 ---
+    // OUT + 0*128 = OUT
+    gpusim.tma_desc %rd2, %rd0, 32, 1, 32, 4;
+    mov.u64 %rd3, 0;                  // (0 << 24) | 0
+    cp.async.bulk.tensor.2d.global.shared::cluster [%rd2], [%rd3];
+
+    // --- Rank 1: cluster encoding (1 << 24) | 0 = 16777216 ---
+    // OUT + 1*128 = OUT + 128
+    add.u64 %rd4, %rd0, 128;
+    gpusim.tma_desc %rd2, %rd4, 32, 1, 32, 4;
+    mov.u64 %rd3, 16777216;           // (1 << 24) | 0
+    cp.async.bulk.tensor.2d.global.shared::cluster [%rd2], [%rd3];
+
+    // --- Rank 2: cluster encoding (2 << 24) | 0 = 33554432 ---
+    // OUT + 2*128 = OUT + 256
+    add.u64 %rd4, %rd0, 256;
+    gpusim.tma_desc %rd2, %rd4, 32, 1, 32, 4;
+    mov.u64 %rd3, 33554432;           // (2 << 24) | 0
+    cp.async.bulk.tensor.2d.global.shared::cluster [%rd2], [%rd3];
+
+    // --- Rank 3: cluster encoding (3 << 24) | 0 = 50331648 ---
+    // OUT + 3*128 = OUT + 384
+    add.u64 %rd4, %rd0, 384;
+    gpusim.tma_desc %rd2, %rd4, 32, 1, 32, 4;
+    mov.u64 %rd3, 50331648;           // (3 << 24) | 0
+    cp.async.bulk.tensor.2d.global.shared::cluster [%rd2], [%rd3];
+
+    cp.async.bulk.commit_group;
+    cp.async.bulk.wait_group 0;
+
+END:
+    barrier.cluster.arrive;
+    barrier.cluster.wait;
+    ret;
+}

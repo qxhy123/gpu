@@ -69,10 +69,12 @@ class Recorder:
                 yield WarpStateSegment(warp_id=wid, start=s[0], end=s[1],
                                        state=s[2], pc=s[3])
 
-    def instr_issue(self, *, cycle, warp_id, pc, op, src_loc, active_mask) -> None:
+    def instr_issue(self, *, cycle, warp_id, pc, op, src_loc, active_mask,
+                    stream_id: int = 0) -> None:
         self._instr_issues.append(InstrIssueEvent(
             cycle=cycle, warp_id=warp_id, pc=pc, op=op,
-            src_loc=tuple(src_loc), active_mask=int(active_mask)))
+            src_loc=tuple(src_loc), active_mask=int(active_mask),
+            stream_id=stream_id))
 
     def instr_issues(self) -> list[InstrIssueEvent]:
         return list(self._instr_issues)
@@ -83,8 +85,10 @@ class Recorder:
     def smem_accesses(self) -> list[SmemEvent]:
         return list(self._smem)
 
-    def gmem_access(self, *, cycle, warp_id, n_transactions, efficiency, addresses) -> None:
-        self._gmem.append(GmemEvent(cycle, warp_id, n_transactions, float(efficiency), tuple(addresses)))
+    def gmem_access(self, *, cycle, warp_id, n_transactions, efficiency, addresses,
+                    stream_id: int = 0) -> None:
+        self._gmem.append(GmemEvent(cycle, warp_id, n_transactions, float(efficiency),
+                                    tuple(addresses), stream_id))
 
     def gmem_accesses(self) -> list[GmemEvent]:
         return list(self._gmem)
@@ -107,11 +111,11 @@ class Recorder:
     def cta_events(self) -> list[CtaEvent]:
         return list(self._cta)
 
-    def bar_reach(self, *, cycle, cta_id, barrier_id=0) -> None:
-        self._bar.append(BarEvent("REACH", cycle, cta_id, barrier_id))
+    def bar_reach(self, *, cycle, cta_id, barrier_id=0, stream_id: int = 0) -> None:
+        self._bar.append(BarEvent("REACH", cycle, cta_id, barrier_id, stream_id))
 
-    def bar_release(self, *, cycle, cta_id, barrier_id=0) -> None:
-        self._bar.append(BarEvent("RELEASE", cycle, cta_id, barrier_id))
+    def bar_release(self, *, cycle, cta_id, barrier_id=0, stream_id: int = 0) -> None:
+        self._bar.append(BarEvent("RELEASE", cycle, cta_id, barrier_id, stream_id))
 
     def bar_events(self) -> list[BarEvent]:
         return list(self._bar)
@@ -133,11 +137,13 @@ class Recorder:
                                 set_idx=set_idx, way=way, victim_addr=victim_addr))
 
     def l2_mshr(self, *, kind: str, cycle: int, line_addr: int,
-                  sm_id: int, n_waiters: int = 0) -> None:
+                  sm_id: int, n_waiters: int = 0,
+                  stream_id: int = 0) -> None:
         from gpusim.trace.events import L2MshrEvent
         self.l2_mshr_events.append(L2MshrEvent(
             kind=kind, cycle=cycle, line_addr=line_addr,
             sm_id=sm_id, n_waiters=n_waiters,
+            stream_id=stream_id,
         ))
 
     def l2_accesses(self) -> list[L2Event]:
@@ -154,11 +160,12 @@ class Recorder:
 
     def mma(self, *, cycle: int, warp_id: int, pc: int, precision: str,
             shape_m: int, shape_n: int, shape_k: int, accum_dtype: str,
-            flops_count: int) -> None:
+            flops_count: int, stream_id: int = 0) -> None:
         self.mma_events.append(MmaEvent(
             cycle=cycle, warp_id=warp_id, pc=pc, precision=precision,
             shape_m=shape_m, shape_n=shape_n, shape_k=shape_k,
             accum_dtype=accum_dtype, flops_count=flops_count,
+            stream_id=stream_id,
         ))
 
     def wgmma(self, *, kind: str, cycle: int, warp_group_id: int, pc: int,
@@ -193,55 +200,65 @@ class Recorder:
 
     def cta_dispatch(self, *, cycle: int, cta_id: int, sm_id: int,
                        queue_position: int = 0,
-                       active_warps_at_dispatch: int = 0) -> None:
+                       active_warps_at_dispatch: int = 0,
+                       stream_id: int = 0) -> None:
         from gpusim.trace.events import CtaDispatchEvent
         self.cta_dispatch_events.append(CtaDispatchEvent(
             cycle=cycle, cta_id=cta_id, sm_id=sm_id,
             queue_position=queue_position,
             active_warps_at_dispatch=active_warps_at_dispatch,
+            stream_id=stream_id,
         ))
 
     def bulk_store(self, *, kind: str, cycle: int, warp_group_id: int,
                      sm_id: int, pc: int = 0,
                      smem_src: int = 0, gmem_base: int = 0,
                      bytes_total: int = 0, completion_at: int = -1,
-                     commit_group_id: int = -1, wait_n: int = -1) -> None:
+                     commit_group_id: int = -1, wait_n: int = -1,
+                     stream_id: int = 0) -> None:
         from gpusim.trace.events import BulkStoreEvent
         self.bulk_store_events.append(BulkStoreEvent(
             kind=kind, cycle=cycle, warp_group_id=warp_group_id, sm_id=sm_id,
             pc=pc, smem_src=smem_src, gmem_base=gmem_base,
             bytes_total=bytes_total, completion_at=completion_at,
             commit_group_id=commit_group_id, wait_n=wait_n,
+            stream_id=stream_id,
         ))
 
     def cluster_dispatch(self, *, cycle: int, cluster_id: int,
                             cluster_size: int, sm_ids: tuple,
-                            cta_ids: tuple, queue_position: int = 0) -> None:
+                            cta_ids: tuple, queue_position: int = 0,
+                            stream_id: int = 0) -> None:
         from gpusim.trace.events import ClusterDispatchEvent
         self.cluster_dispatch_events.append(ClusterDispatchEvent(
             cycle=cycle, cluster_id=cluster_id, cluster_size=cluster_size,
             sm_ids=sm_ids, cta_ids=cta_ids, queue_position=queue_position,
+            stream_id=stream_id,
         ))
 
     def cluster_barrier(self, *, kind: str, cycle: int, cluster_id: int,
                           cta_id: int, rank: int, sm_id: int,
-                          arrived_count: int = 0) -> None:
+                          arrived_count: int = 0,
+                          stream_id: int = 0) -> None:
         from gpusim.trace.events import ClusterBarrierEvent
         self.cluster_barrier_events.append(ClusterBarrierEvent(
             kind=kind, cycle=cycle, cluster_id=cluster_id, cta_id=cta_id,
             rank=rank, sm_id=sm_id, arrived_count=arrived_count,
+            stream_id=stream_id,
         ))
 
     def atomic(self, *, cycle: int, sm_id: int, warp_id: int,
                 kind: str, op: str, space: str, line_addr: int,
                 latency: int, n_lanes: int = 1,
-                queue_depth_before: int = 0) -> None:
+                queue_depth_before: int = 0,
+                stream_id: int = 0) -> None:
         from gpusim.trace.events import AtomicEvent
         self.atomic_events.append(AtomicEvent(
             cycle=cycle, sm_id=sm_id, warp_id=warp_id,
             kind=kind, op=op, space=space, line_addr=line_addr,
             latency=latency, n_lanes=n_lanes,
             queue_depth_before=queue_depth_before,
+            stream_id=stream_id,
         ))
 
     def kernel_launch(self, *, stream_id: int, kernel_name: str,

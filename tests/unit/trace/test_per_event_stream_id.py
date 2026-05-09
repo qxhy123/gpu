@@ -20,3 +20,13 @@ def test_atomic_event_accepts_stream_id_explicit():
                      op="add", space="global", line_addr=0,
                      latency=10, stream_id=3)
     assert e.stream_id == 3
+
+
+def test_recorder_methods_accept_stream_id():
+    from gpusim.trace.recorder import Recorder
+    r = Recorder()
+    # All record methods must accept stream_id; events must carry it.
+    r.atomic(cycle=0, sm_id=0, warp_id=0, kind="ATOM",
+              op="add", space="global", line_addr=0, latency=10,
+              stream_id=2)
+    assert r.atomic_events[-1].stream_id == 2

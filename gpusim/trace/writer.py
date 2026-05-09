@@ -190,6 +190,9 @@ def write_parquet(rec: Recorder, out: str | Path) -> None:
     if rec.atomic_events:
         pd.DataFrame([asdict(e) for e in rec.atomic_events]).to_parquet(
             out / "atomic.parquet", index=False)
+    if rec.kernel_launch_events:
+        pd.DataFrame([asdict(e) for e in rec.kernel_launch_events]).to_parquet(
+            out / "kernel_launch.parquet", index=False)
 
 
 # write_all is the canonical name used by Phase 3 callers; delegates to write_parquet

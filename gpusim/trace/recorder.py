@@ -34,6 +34,7 @@ class Recorder:
         self.cluster_dispatch_events: list = []
         self.cluster_barrier_events: list = []
         self.atomic_events: list = []
+        self.kernel_launch_events: list = []
 
     def warp_state(self, *, cycle: int, warp_id: int, state: str, pc: int) -> None:
         cur = self._cur_state.get(warp_id)
@@ -241,4 +242,16 @@ class Recorder:
             kind=kind, op=op, space=space, line_addr=line_addr,
             latency=latency, n_lanes=n_lanes,
             queue_depth_before=queue_depth_before,
+        ))
+
+    def kernel_launch(self, *, stream_id: int, kernel_name: str,
+                       grid: tuple, block: tuple,
+                       launch_cycle: int, complete_cycle: int,
+                       n_ctas: int) -> None:
+        from gpusim.trace.events import KernelLaunch
+        self.kernel_launch_events.append(KernelLaunch(
+            stream_id=stream_id, kernel_name=kernel_name,
+            grid=grid, block=block,
+            launch_cycle=launch_cycle, complete_cycle=complete_cycle,
+            n_ctas=n_ctas,
         ))

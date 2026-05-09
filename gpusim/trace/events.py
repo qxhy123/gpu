@@ -233,3 +233,14 @@ class AtomicEvent:
     latency: int
     n_lanes: int = 1
     queue_depth_before: int = 0
+
+
+@dataclass(frozen=True)
+class KernelLaunch:
+    stream_id: int
+    kernel_name: str
+    grid: tuple
+    block: tuple
+    launch_cycle: int
+    complete_cycle: int
+    n_ctas: int

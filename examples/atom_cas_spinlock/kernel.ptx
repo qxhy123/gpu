@@ -1,0 +1,31 @@
+// atom_cas_spinlock: CAS-based lock-free increment.
+// Each thread atomically increments OUT[0] using a CAS retry loop.
+// OUT[0] = counter, OUT[1] = lock (unused slot kept for layout compatibility).
+//
+// NOTE: A traditional mutex spinlock (acquire lock, ld/add/st, release lock)
+// causes SIMT deadlock when multiple lanes of the same warp compete: the lanes
+// that fail the CAS spin at the top of the SIMT stack while the lane that
+// succeeded sits below — it can never reach the release, so the warp never
+// makes progress.  The lock-free CAS retry shown here achieves the same
+// "CAS as critical section" semantics without that deadlock: each retry round
+// at least one lane succeeds and exits, so the warp always converges.
+
+.entry test(.param .u64 OUT)
+{
+    .reg .u64 %rd<2>;
+    .reg .u32 %r<4>;
+    .reg .pred %p<1>;
+
+    ld.param.u64 %rd0, [OUT];          // %rd0 = &counter
+
+RETRY:
+    ld.global.u32 %r0, [%rd0];        // %r0 = old counter value
+    add.u32 %r1, %r0, 1;              // %r1 = old + 1 (desired new value)
+    // Try: if counter == %r0, set it to %r1; returns actual old value
+    atom.global.cas.u32 %r2, [%rd0], %r0, %r1;
+    // If returned value != expected, someone else changed it — retry
+    setp.ne.u32 %p0, %r2, %r0;
+    @%p0 bra RETRY;
+
+    ret;
+}

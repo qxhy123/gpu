@@ -383,3 +383,10 @@ class Stream:
 
     def is_idle(self) -> bool:
         return self.inflight is None and not self.pending
+
+
+@dataclass
+class MultiStreamResult:
+    streams: dict             # int -> list[Result]
+    total_cycles: int = 0
+    _recorder: object | None = None

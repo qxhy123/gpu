@@ -133,3 +133,52 @@ class Device:
             cycles=cycle, outputs=outputs,
             occupancy={"active_ctas": occ.active_ctas, "bottleneck": occ.bottleneck},
         )
+
+    def run_streams(self, streams: list) -> "MultiStreamResult":
+        """Multi-stream run loop. Each stream's launches are processed in FIFO order;
+        across streams CTAs are interleaved by the MultiStreamScheduler (RR).
+
+        Phase 7 simplification: re-uses Device.run() per-grid for retire,
+        but coordinates across streams at the scheduler level.
+        """
+        from gpusim.core.scheduler import MultiStreamScheduler
+        from gpusim.api import MultiStreamResult, Result
+        from gpusim.frontend.parser import parse
+
+        sched = MultiStreamScheduler(streams)
+        results_per_stream = {s.stream_id: [] for s in streams}
+
+        while not all(s.is_idle() for s in streams):
+            for s in streams:
+                if not s.is_idle() and s.pending:
+                    sched._ensure_inflight(s)
+                if s.inflight is not None:
+                    g = s.inflight
+                    kernel = parse(g.ptx_src, "<inline>")
+                    dev_res = self.run(
+                        kernel=kernel,
+                        grid=g.grid,
+                        block=g.block,
+                        params=g.params,
+                    )
+                    result = Result(
+                        outputs=dev_res.outputs,
+                        mode="timing",
+                        metrics={"cycles": dev_res.cycles,
+                                 "occupancy": dev_res.occupancy},
+                        _occupancy=dev_res.occupancy,
+                        _kernel_name=kernel.name,
+                        _grid=g.grid,
+                        _block=g.block,
+                        stream_id=s.stream_id,
+                    )
+                    results_per_stream[s.stream_id].append(result)
+                    sched.mark_grid_retired(s)
+
+        total_cycles = max((r.metrics.get("cycles", 0)
+                              for results in results_per_stream.values()
+                              for r in results), default=0)
+        return MultiStreamResult(
+            streams=results_per_stream,
+            total_cycles=total_cycles,
+        )

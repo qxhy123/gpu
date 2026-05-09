@@ -59,3 +59,29 @@ def test_intra_stream_fifo_grid_sequencing():
 
     assert grid_order[:2] == ["k0", "k0"]
     assert grid_order[2:] == ["k1", "k1"]
+
+
+def test_device_run_streams_basic_one_stream():
+    """Device.run_streams with a single stream should produce one Result."""
+    import gpusim
+    from gpusim.api import Stream, _reset_stream_id_counter
+    from gpusim.config.loader import load_default
+    _reset_stream_id_counter()
+
+    src = """
+.entry test() {
+    .reg .u32 %r0;
+    mov.u32 %r0, %tid.x;
+    ret;
+}
+"""
+    s = Stream()
+    s.launch(ptx_src=src, grid=(2,1,1), block=(32,1,1), params={}, kernel_name="k")
+
+    cfg = load_default()
+    from gpusim.core.device import Device
+    d = Device(cfg)
+    multi_res = d.run_streams([s])
+    assert 0 in multi_res.streams
+    assert len(multi_res.streams[0]) == 1
+    assert multi_res.streams[0][0].metrics["cycles"] > 0

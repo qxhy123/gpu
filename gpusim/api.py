@@ -352,6 +352,41 @@ def run(*, ptx_src: str | None = None, ptx_path: str | Path | None = None,
     raise NotImplementedError(f"mode={mode!r} not implemented yet")
 
 
+_EVENT_ID_COUNTER = 0
+
+
+def _next_event_id() -> int:
+    global _EVENT_ID_COUNTER
+    eid = _EVENT_ID_COUNTER
+    _EVENT_ID_COUNTER += 1
+    return eid
+
+
+def _reset_event_id_counter() -> None:
+    """Test-only helper."""
+    global _EVENT_ID_COUNTER
+    _EVENT_ID_COUNTER = 0
+
+
+@dataclass
+class Event:
+    event_id: int = field(default_factory=_next_event_id)
+    recorded_in_stream: object | None = None     # type: Stream
+    record_cycle: int | None = None
+    signaled_at_cycle: int | None = None
+
+    def is_signaled(self, current_cycle: int) -> bool:
+        return (self.signaled_at_cycle is not None
+                and self.signaled_at_cycle <= current_cycle)
+
+
+@dataclass
+class _RecordMarker:
+    """Internal sentinel for Stream.record(). Treated as zero-CTA pseudo-grid by scheduler."""
+    event: Event
+    grid: tuple = (0, 0, 0)
+
+
 _STREAM_ID_COUNTER = 0
 
 

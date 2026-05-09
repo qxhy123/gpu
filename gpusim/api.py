@@ -421,6 +421,7 @@ class Stream:
     completed: list = field(default_factory=list)
     in_flight_ctas: int = 0     # NEW Phase 8 — count of dispatched CTAs not yet retired
     priority: str = "normal"    # NEW Phase 8 — "high" | "normal" | "low"
+    event_waits: list = field(default_factory=list)    # NEW Phase 8 — Events this stream is waiting on
 
     def __post_init__(self):
         if self.priority not in ("high", "normal", "low"):
@@ -433,6 +434,14 @@ class Stream:
             ptx_src=ptx_src, kernel_name=kernel_name,
             grid=grid, block=block, params=params, config=config,
         ))
+
+    def record(self, ev: Event) -> None:
+        """Append a record-marker to pending; signals ev when prior pending+inflight retire."""
+        self.pending.append(_RecordMarker(event=ev))
+
+    def wait(self, ev: Event) -> None:
+        """Block this stream's future launches until ev is signaled."""
+        self.event_waits.append(ev)
 
     def is_idle(self) -> bool:
         return self.inflight is None and not self.pending

@@ -25,3 +25,30 @@ def test_event_is_signaled_after_signal():
     assert not e.is_signaled(current_cycle=49)
     assert e.is_signaled(current_cycle=50)
     assert e.is_signaled(current_cycle=100)
+
+
+def test_stream_record_appends_marker():
+    from gpusim.api import Stream, Event, _reset_stream_id_counter, _reset_event_id_counter, _RecordMarker
+    _reset_stream_id_counter(); _reset_event_id_counter()
+    s = Stream()
+    ev = Event()
+    s.record(ev)
+    assert len(s.pending) == 1
+    assert isinstance(s.pending[0], _RecordMarker)
+    assert s.pending[0].event is ev
+
+
+def test_stream_wait_appends_to_event_waits():
+    from gpusim.api import Stream, Event, _reset_stream_id_counter, _reset_event_id_counter
+    _reset_stream_id_counter(); _reset_event_id_counter()
+    s = Stream()
+    ev = Event()
+    s.wait(ev)
+    assert ev in s.event_waits
+
+
+def test_stream_event_waits_default_empty():
+    from gpusim.api import Stream, _reset_stream_id_counter
+    _reset_stream_id_counter()
+    s = Stream()
+    assert s.event_waits == []

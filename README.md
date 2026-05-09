@@ -39,10 +39,15 @@ python examples/vector_add/run.py
 - **Compute vs memory overlap** — interleave compute-heavy and memory-heavy kernels across streams — `examples/compute_vs_memory_overlap/` + Chapter 28
 - **L2/HBM contention across streams** — model cross-stream L2 bandwidth pressure — `examples/l2_contention_2stream/` + Chapter 29
 - **Stream scheduler fairness** — serial vs concurrent scheduling, Jain fairness index — `examples/stream_priority_serial_vs_concurrent/` + Chapter 30
+- **True concurrent scheduling** — `ConcurrentStreamScheduler` per-cycle weighted round-robin across streams — `examples/true_concurrent_overlap/` + Chapter 31
+- **Stream priority** — high/normal/low priority levels with 4:2:1 dispatch weights — `examples/priority_demo/` + Chapter 32
+- **CUDA Events** — `Event` class + `Stream.record`/`wait` for cross-stream synchronization + `StreamEvent` Perfetto annotations — `examples/event_producer_consumer/` + `examples/event_fanout/` + Chapters 33–34
+- **L2 set-window partitioning** — `Stream.set_l2_window` / `cudaStreamAttributeAccessPolicyWindow` equivalent; API + L2 registration; eviction integration is Phase 9 — `examples/l2_window_demo/` + Chapter 35
+- **Multi-stream full pipeline** — load → compute → store across 3 streams with event ordering — `examples/multi_stream_pipeline_full/` + Chapter 36
 
 ## Run a kernel and inspect the report
 ```bash
-# Option 1: Python API — Phase 7 multi-stream example
+# Option 1: Python API — Phase 8 multi-stream example
 python -c "
 import numpy as np, gpusim, pathlib
 from gpusim.config.loader import load_default
@@ -56,20 +61,26 @@ c0 = np.zeros(n, dtype=np.float32)
 c1 = np.zeros(n, dtype=np.float32)
 ptx = pathlib.Path('examples/vector_add/kernel.ptx').read_text()
 
-# Phase 7: multi-stream API
-s0 = gpusim.Stream()
-s1 = gpusim.Stream()
+# Phase 8: multi-stream API with priority + events
+from gpusim import Event
+s0 = gpusim.Stream(priority='high')
+s1 = gpusim.Stream(priority='normal')
 s0.launch(ptx, grid=(4,1,1), block=(128,1,1),
           params={'A':a,'B':b,'C':c0,'N':n}, kernel_name='vadd_s0', config=cfg)
+ev = Event()
+s0.record(ev)        # record event after s0 kernel
+s1.wait(ev)          # s1 waits for s0 to finish before launching
 s1.launch(ptx, grid=(4,1,1), block=(128,1,1),
           params={'A':b,'B':a,'C':c1,'N':n}, kernel_name='vadd_s1', config=cfg)
 
 multi_res = gpusim.synchronize([s0, s1], config=cfg)
 print(multi_res.stream_summary())
-# Note: Phase 7 uses sequential drain in run_streams; cross-grid concurrency
-# benefits are not yet realized in cycle counts (future iteration).
-
-# Phase 7: 4 stream metrics
+print(multi_res.cross_stream_concurrency_gain())
+print(multi_res.priority_dispatch_share())
+print(multi_res.event_wait_cycles())
+print(multi_res.event_chain_critical_path())
+print(multi_res.l2_window_hit_rate())
+# Phase 8: 6 stream metrics (4 from Phase 7 + 2 new)
 from gpusim.analysis.metrics import (
     stream_concurrency_factor, compute_memory_overlap,
     l2_bandwidth_per_stream, stream_fairness_jain,
@@ -104,8 +115,8 @@ gpusim run examples/vector_add/kernel.ptx \
     --mode timing \
     --output report.html --perfetto trace.json
 ```
-- `report.html` — open in any browser; Phase 3 adds §11 Tensor Core、§12 wgmma、§13 TMA、§14 Barrier sections; Phase 4 adds §15–§18 (CTA dispatch、L2 MSHR、bulk-store overlap、per-SM utilization); Phase 5 adds §19–§20 (cluster dispatch、cluster barrier stats); Phase 6 adds §21 Atomic Operations、§22 Cooperative Epilogue; Phase 7 adds §27 Stream Concurrency、§28 Per-Stream Breakdown
-- `trace.json` — drag into https://ui.perfetto.dev; Phase 3 adds TC / TMA / Barrier tracks; Phase 4 adds per-SM swimlane; Phase 5 adds cluster swimlane; Phase 6 adds Atomic track (AtomicEvent per-line FIFO serialization); Phase 7 adds Stream-N swimlanes (one per stream_id)
+- `report.html` — open in any browser; Phase 3 adds §11 Tensor Core、§12 wgmma、§13 TMA、§14 Barrier sections; Phase 4 adds §15–§18 (CTA dispatch、L2 MSHR、bulk-store overlap、per-SM utilization); Phase 5 adds §19–§20 (cluster dispatch、cluster barrier stats); Phase 6 adds §21 Atomic Operations、§22 Cooperative Epilogue; Phase 7 adds §27 Stream Concurrency、§28 Per-Stream Breakdown; Phase 8 adds §29 Cross-Stream Concurrency Gain、§30 Priority Dispatch、§31 Event/L2-Window Stats
+- `trace.json` — drag into https://ui.perfetto.dev; Phase 3 adds TC / TMA / Barrier tracks; Phase 4 adds per-SM swimlane; Phase 5 adds cluster swimlane; Phase 6 adds Atomic track (AtomicEvent per-line FIFO serialization); Phase 7 adds Stream-N swimlanes (one per stream_id); Phase 8 adds StreamEvent annotations (record/wait markers per stream with cycle timestamps)
 
 ## What's modeled
 
@@ -120,7 +131,8 @@ gpusim run examples/vector_add/kernel.ptx \
 | 5 | ✅ done | Hopper Cluster CGA, dsmem, cluster barrier, cluster TMA |
 | 6 | ✅ done | gmem/smem atomics (5 ops × 3 dtypes), cluster TMA store, cooperative epilogue |
 | 7 | ✅ done | Multi-stream API (Stream/launch/synchronize), 4 stream metrics, KernelLaunch trace, §27/§28 HTML, Stream-N Perfetto swimlanes |
-| 8+ | future | Warp shuffle, ITS, cross-grid concurrency, multi-GPU |
+| 8 | ✅ done | True concurrent scheduler (ConcurrentStreamScheduler), stream priority (4:2:1 weights), CUDA Events, L2 set-window API, 6 metrics, §29/§30/§31 HTML, StreamEvent Perfetto |
+| 9+ | future | Warp shuffle, ITS, L2 window eviction integration, multi-GPU |
 
 ### Phase 1 ✅ — SIMT 基础
 Single SM, cycle-approximate, Hopper-shaped. PTX subset (~30 ops). Shared memory bank conflicts, global memory coalescing, regfile bank conflicts, multi-CTA occupancy.
@@ -141,10 +153,13 @@ Single SM, cycle-approximate, Hopper-shaped. PTX subset (~30 ops). Shared memory
 **Global memory atomics (gmem atomic):** `atom.global` and `red.global` supporting 5 operations (add / min / max / exch / cas) × 3 data types (u32 / s32 / f32). **L2AtomicQueue:** per-cache-line FIFO queue that serializes concurrent atomic requests from multiple SMs, modeling real hardware cross-SM contention. **Shared memory atomics (smem atomic):** `atom.shared` and `red.shared` with bank-conflict-aware serialization. **Cluster TMA store:** `cp.async.bulk.tensor.2d.global.shared::cluster` cluster-scoped async smem→gmem epilogue. **Cooperative epilogue:** cluster-coordinated writeback pattern. **4 new metrics:** `atomic_throughput_per_line`, `serialization_overhead`, `atom_red_ratio`, `cooperative_overlap`. **1 new trace event:** `AtomicEvent` (op, dtype, address, SM, cycle) recorded to Parquet + surfaced in Perfetto Atomic track. **HTML report adds §21** (Atomic Operations — throughput, contention, per-op breakdown) **and §22** (Cooperative Epilogue — cluster store overlap).
 
 ### Phase 7 ✅ — Multi-Stream / Multi-Kernel Concurrency
-**Multi-stream API:** `gpusim.Stream` dataclass + `Stream.launch(ptx, grid, block, params, kernel_name, config)` enqueues kernels; `gpusim.synchronize(streams, config)` drains all streams and returns a `MultiStreamResult`. **100% backward compatible:** `gpusim.run()` is unchanged. **Round-robin CTA scheduler across streams:** `MultiStreamScheduler` dispatches CTAs from multiple streams in round-robin order, propagating `stream_id` through all dispatch events. **1 new trace event:** `KernelLaunch` (stream_id, kernel_name, grid, block, launch_cycle, complete_cycle, n_ctas) recorded to Parquet. **stream_id propagated to 11 existing events:** CTA dispatch, warp events, SubCore events and more now carry `stream_id` for per-stream attribution. **4 new analysis metrics:** `stream_concurrency_factor`, `compute_memory_overlap`, `l2_bandwidth_per_stream`, `stream_fairness_jain` (Jain's fairness index). **`MultiStreamResult` API:** `stream_summary()`, `stream_metrics`, `kernel_launch_events_df`, `per_stream_events_df`, `fairness()`, `overlap_ratio()`. **HTML report adds §27** (Stream Concurrency — concurrency factor, timeline) **and §28** (Per-Stream Breakdown — cycles, CTAs, bandwidth per stream). **Perfetto adds Stream-N swimlanes:** one process track per unique `stream_id` shows kernel durations across streams. **Honest limitation:** Phase 7 uses sequential drain in `run_streams`; cross-grid concurrency is modeled at the CTA scheduling level, but cycle counts do not yet reflect true simultaneous execution of multiple grids. Cross-grid cycle-accurate concurrency is planned for a future iteration.
+**Multi-stream API:** `gpusim.Stream` dataclass + `Stream.launch(ptx, grid, block, params, kernel_name, config)` enqueues kernels; `gpusim.synchronize(streams, config)` drains all streams and returns a `MultiStreamResult`. **100% backward compatible:** `gpusim.run()` is unchanged. **Round-robin CTA scheduler across streams:** `MultiStreamScheduler` dispatches CTAs from multiple streams in round-robin order, propagating `stream_id` through all dispatch events. **1 new trace event:** `KernelLaunch` (stream_id, kernel_name, grid, block, launch_cycle, complete_cycle, n_ctas) recorded to Parquet. **stream_id propagated to 11 existing events:** CTA dispatch, warp events, SubCore events and more now carry `stream_id` for per-stream attribution. **4 new analysis metrics:** `stream_concurrency_factor`, `compute_memory_overlap`, `l2_bandwidth_per_stream`, `stream_fairness_jain` (Jain's fairness index). **`MultiStreamResult` API:** `stream_summary()`, `stream_metrics`, `kernel_launch_events_df`, `per_stream_events_df`, `fairness()`, `overlap_ratio()`. **HTML report adds §27** (Stream Concurrency — concurrency factor, timeline) **and §28** (Per-Stream Breakdown — cycles, CTAs, bandwidth per stream). **Perfetto adds Stream-N swimlanes:** one process track per unique `stream_id` shows kernel durations across streams.
+
+### Phase 8 ✅ — True Concurrent Scheduler + Priority + Events + L2 Window
+**True concurrent scheduler:** `ConcurrentStreamScheduler` replaces `MultiStreamScheduler`; per-cycle weighted round-robin dispatches CTAs across streams each tick, maximizing CTA-level interleave within `Device.run`'s per-grid execution loop. (`MultiStreamScheduler` kept as a backward-compatible alias.) **Honest limitation (M1):** concurrency benefit is bounded by `Device.run`'s per-grid execution granularity; future iteration can slice `Device.run` by cycle for full grid-level interleave. **Stream priority:** `Stream(priority='high'|'normal'|'low')` with configurable dispatch weights (default 4:2:1 high/normal/low). **1 new metric:** `priority_dispatch_share` (dict of priority → fraction of CTAs dispatched). **CUDA Events:** `gpusim.Event` class + `Stream.record(event)` + `Stream.wait(event)` for cross-stream ordering. **1 new trace event:** `StreamEvent` (event_id, stream_id, kind='record'|'wait', cycle) recorded to Parquet + emitted as Perfetto instant events on per-stream tracks. **2 new metrics:** `event_wait_cycles` (dict of event_id → cycles a stream stalled waiting), `event_chain_critical_path` (longest event-dependency chain in cycles). **L2 set-window partitioning:** `Stream.set_l2_window(hit_ratio, num_bytes, action)` — `cudaStreamAttributeAccessPolicyWindow` equivalent; registers a priority window on the L2 cache (API + L2 registration + window-aware eviction logic in `L2Cache.register_stream_window`). **2 new metrics:** `l2_window_hit_rate` (fraction of accesses hitting in-window lines), `l2_window_protection_efficiency` (fraction of window lines not evicted). **Honest limitation (L2 window):** per-access data plumbing for the hit-rate denominator metric is Phase 9 work; registration and eviction path are complete. **HTML report adds §29** (Cross-Stream Concurrency Gain), **§30** (Priority Dispatch Share), **§31** (Event Chain + L2 Window Stats). **Perfetto adds StreamEvent annotations** per stream. **6 new examples** (examples 30–35) + **6 tutorial chapters 31–36**. **100% backward compatible:** Phase 1–7 APIs unchanged.
 
 ## What's NOT modeled
-Warp shuffle, ITS, cross-grid cycle-accurate concurrency (Phase 7 schedules CTAs concurrently but drains streams sequentially), multi-GPU. See `docs/superpowers/specs/2026-05-07-gpusim-phase1-design.md` section 11.
+Warp shuffle, ITS, L2 window per-access hit-rate data plumbing (Phase 9), full grid-level cycle-accurate interleave (Phase 8 does CTA-level interleave), multi-GPU. See `docs/superpowers/specs/2026-05-07-gpusim-phase1-design.md` section 11.
 
 ## Tutorial
 Read `docs/tutorial/00-intro.md` first.
@@ -182,3 +197,9 @@ Read `docs/tutorial/00-intro.md` first.
 | **28** | **计算与内存重叠 — compute_memory_overlap 跨流流水线** |
 | **29** | **L2/HBM 跨流竞争 — l2_bandwidth_per_stream 带宽压力** |
 | **30** | **调度器公平性 — stream_fairness_jain Jain 公平指数** |
+| **31** | **真并发调度 — ConcurrentStreamScheduler 加权轮询与 cross_stream_concurrency_gain** |
+| **32** | **流优先级 — high/normal/low 权重 4:2:1 + priority_dispatch_share** |
+| **33** | **CUDA Events 入门 — Event / record / wait + event_wait_cycles** |
+| **34** | **Event 链路径 — event_chain_critical_path + 生产者消费者模式** |
+| **35** | **L2 set-window 分区 — cudaStreamAttributeAccessPolicyWindow API + 命中率指标** |
+| **36** | **多流全流水线 — load → compute → store 跨流 event 排序** |

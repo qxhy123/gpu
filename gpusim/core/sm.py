@@ -353,11 +353,24 @@ class SM:
             desc_reg = instr.src[0]
             smem_src_reg = instr.src[1]
             handle = ws[0].fn_state.threads[0].get_u64(desc_reg.name)
-            smem_src = ws[0].fn_state.threads[0].get_u64(smem_src_reg.name)
+            smem_src_raw = ws[0].fn_state.threads[0].get_u64(smem_src_reg.name)
             desc = self._tma_descriptor_pool.lookup(handle)
+            # Cluster TMA store: decode cluster-encoded smem_src pointer
+            # (rank << 24) | offset  →  source_cta = cluster_id * cluster_size + rank
+            op = instr.op
+            cluster_size = getattr(self, "_cluster_size", 1)
+            w0 = ws[0]
+            if ("shared::cluster" in op and getattr(w0, "cluster_id", -1) >= 0
+                    and cluster_size > 1):
+                smem_src_rank = (int(smem_src_raw) >> 24) & 0xFF
+                smem_src = int(smem_src_raw) & 0xFFFFFF
+                source_cta = w0.cluster_id * cluster_size + smem_src_rank
+            else:
+                smem_src = int(smem_src_raw)
+                source_cta = w0.cta_id
             tx_bytes = do_bulk_store_2d(
                 gmem=self._gmem, smem=self._smem,
-                cta_id=ws[0].cta_id, smem_src=smem_src, desc=desc,
+                cta_id=source_cta, smem_src=smem_src, desc=desc,
             )
             n_lines = (tx_bytes + 127) // 128
             latency_per_line = self.cfg.tensor_core.bulk_store_latency_per_line

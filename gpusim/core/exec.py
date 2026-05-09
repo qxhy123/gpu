@@ -889,10 +889,19 @@ def functional_run(ptx_src: str, *, params: dict[str, np.ndarray | int],
                         from gpusim.core.tma_store import do_bulk_store_2d
                         instr = k.instrs[pc]
                         handle = w.threads[0].get_u64(instr.src[0].name)
-                        smem_src = w.threads[0].get_u64(instr.src[1].name)
+                        smem_src_raw = w.threads[0].get_u64(instr.src[1].name)
                         desc = fn_tma_pool.lookup(handle)
-                        do_bulk_store_2d(gmem=g, smem=s, cta_id=cta_id,
-                                         smem_src=int(smem_src), desc=desc)
+                        # Cluster TMA store: decode cluster-encoded smem_src pointer
+                        if ("shared::cluster" in op and cluster_id >= 0
+                                and cluster_size > 1):
+                            smem_src_rank = (int(smem_src_raw) >> 24) & 0xFF
+                            smem_src_off = int(smem_src_raw) & 0xFFFFFF
+                            source_cta = cluster_id * cluster_size + smem_src_rank
+                        else:
+                            smem_src_off = int(smem_src_raw)
+                            source_cta = cta_id
+                        do_bulk_store_2d(gmem=g, smem=s, cta_id=source_cta,
+                                         smem_src=smem_src_off, desc=desc)
                         st.update_top_pc(pc + 1); st.maybe_pop()
                         progressed = True
                         continue

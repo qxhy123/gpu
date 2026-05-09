@@ -82,6 +82,10 @@ SUPPORTED_KERNELS = [
     "multi_sm_scheduler",
     "l2_sharing_demo",
     "tma_store_matmul",
+    # Phase 5 additions
+    "cluster_basic",
+    "cluster_matmul_dsmem",
+    "cluster_tma_pipeline",
 ]
 
 

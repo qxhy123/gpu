@@ -113,3 +113,17 @@ def test_multistream_result_kernel_launch_events_df():
     # df may be empty if Device.run doesn't emit kernel_launch events yet
     # That's OK — the test just checks the property is callable.
     assert df is not None
+
+
+def test_result_carries_kernel_name():
+    import gpusim
+    src = """
+.entry test() {
+    .reg .u32 %r0;
+    mov.u32 %r0, %tid.x;
+    ret;
+}
+"""
+    res = gpusim.run(ptx_src=src, grid=(1,1,1), block=(32,1,1),
+                      params={}, mode="timing", kernel_name="my_k")
+    assert res.kernel_name == "my_k"

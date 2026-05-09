@@ -22,6 +22,7 @@ class Result:
     _block: tuple = field(default=(1,1,1), repr=False)
     _occupancy: dict | None = field(default=None, repr=False)
     stream_id: int = 0    # NEW Phase 7 — single-kernel path uses default 0
+    kernel_name: str = "<unnamed>"    # NEW Phase 7
 
     def summary(self) -> str:
         cyc = self.metrics.get("cycles", "?")
@@ -322,7 +323,8 @@ def run(*, ptx_src: str | None = None, ptx_path: str | Path | None = None,
             fn_cluster_size = getattr(config, "cluster_size", 1)
         functional_run(ptx_src, params=params, grid=grid, block=block,
                        cluster_size=fn_cluster_size)
-        return Result(outputs=outputs, mode="functional", metrics={})
+        return Result(outputs=outputs, mode="functional", metrics={},
+                      kernel_name=kernel_name)
     if mode == "timing":
         from gpusim.frontend.parser import parse
         from gpusim.config.loader import load_default, load_yaml
@@ -344,6 +346,7 @@ def run(*, ptx_src: str | None = None, ptx_path: str | Path | None = None,
             _recorder=rec, _kernel_name=k.name, _grid=grid, _block=block,
             _occupancy=res.occupancy,
             stream_id=stream_id,
+            kernel_name=kernel_name,
         )
         return result
     raise NotImplementedError(f"mode={mode!r} not implemented yet")

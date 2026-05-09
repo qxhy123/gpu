@@ -183,6 +183,7 @@ class Device:
                         _grid=g.grid,
                         _block=g.block,
                         stream_id=s.stream_id,
+                        kernel_name=g.kernel_name,
                     )
                     results_per_stream[s.stream_id].append(result)
                     sched.mark_grid_retired(s)

@@ -97,6 +97,13 @@ SUPPORTED_KERNELS = [
     "compute_vs_memory_overlap",
     "l2_contention_2stream",
     "stream_priority_serial_vs_concurrent",
+    # Phase 8 additions
+    "true_concurrent_overlap",
+    "priority_demo",
+    "event_producer_consumer",
+    "event_fanout",
+    "l2_window_demo",
+    "multi_stream_pipeline_full",
 ]
 
 

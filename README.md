@@ -27,10 +27,13 @@ python examples/vector_add/run.py
 - **Multi-SM topology** — 8 SMs (default, configurable via `DeviceConfig.n_sm`), CTA→SM scheduler (RR / greedy) — `examples/multi_sm_scheduler/` + Chapter 16
 - **Cross-SM L2 sharing** — shared L2 with cross-SM MSHR coalescing — `examples/l2_sharing_demo/` + Chapter 17
 - **TMA store pipeline** — `cp.async.bulk.tensor.2d.global.shared::cta` + commit_group / wait_group — `examples/tma_store_matmul/` + Chapter 18
+- **Hopper Cluster (CGA) + distributed shared memory (dsmem)** — `mapa.shared::cluster` + `ld/st.shared::cluster` for cross-CTA smem access — `examples/cluster_basic/` + Chapter 19
+- **Cluster barrier sync** — `barrier.cluster.{arrive,wait}` two-phase async cluster sync + `mbarrier.{init,arrive,try_wait}.shared::cluster` — `examples/cluster_matmul_dsmem/` + Chapter 20
+- **Cluster TMA load** — `cp.async.bulk.tensor.shared::cluster` writes to remote CTA's smem — `examples/cluster_tma_pipeline/` + Chapter 21
 
 ## Run a kernel and inspect the report
 ```bash
-# Option 1: Python API — Phase 4 multi-SM example
+# Option 1: Python API — Phase 5 cluster example
 python -c "
 import numpy as np, gpusim, pathlib
 from gpusim.config.loader import load_default
@@ -38,6 +41,7 @@ from gpusim.config.loader import load_default
 cfg = load_default()
 cfg.n_sm = 8                    # Phase 4 default
 cfg.scheduler.cta_policy = 'greedy'
+cfg.cluster_size = 4              # Phase 5: 4-CTA clusters
 n = 1024
 a = np.random.randn(n).astype(np.float32)
 b = np.random.randn(n).astype(np.float32)
@@ -48,6 +52,8 @@ res = gpusim.run(ptx_src=ptx, grid=(8,1,1), block=(128,1,1),
 res.html_report('report.html')
 res.perfetto('trace.json')
 print(res.summary())
+# Phase 5: cluster-level metrics
+print(res.cluster_summary())
 # Phase 4: device-level metrics
 print(res.device_summary())
 print(res.cta_dispatch_events_df)
@@ -68,8 +74,8 @@ gpusim run examples/vector_add/kernel.ptx \
     --mode timing \
     --output report.html --perfetto trace.json
 ```
-- `report.html` — open in any browser; Phase 3 adds §11 Tensor Core、§12 wgmma、§13 TMA、§14 Barrier sections; Phase 4 adds §15–§18 (CTA dispatch、L2 MSHR、bulk-store overlap、per-SM utilization)
-- `trace.json` — drag into https://ui.perfetto.dev; Phase 3 adds TC / TMA / Barrier tracks; Phase 4 adds per-SM swimlane
+- `report.html` — open in any browser; Phase 3 adds §11 Tensor Core、§12 wgmma、§13 TMA、§14 Barrier sections; Phase 4 adds §15–§18 (CTA dispatch、L2 MSHR、bulk-store overlap、per-SM utilization); Phase 5 adds §19–§20 (cluster dispatch、cluster barrier stats)
+- `trace.json` — drag into https://ui.perfetto.dev; Phase 3 adds TC / TMA / Barrier tracks; Phase 4 adds per-SM swimlane; Phase 5 adds cluster swimlane
 
 ## What's modeled
 
@@ -81,7 +87,8 @@ gpusim run examples/vector_add/kernel.ptx \
 | 2 | ✅ done | Tag-precise L1/L2/HBM cache hierarchy |
 | 3 | ✅ done | Tensor Core (sync mma + wgmma) + TMA-lite |
 | 4 | ✅ done | Multi-SM topology, CTA scheduler, shared L2, TMA store |
-| 5+ | future | Thread-block clusters, warp shuffle, multi-GPU |
+| 5 | ✅ done | Hopper Cluster CGA, dsmem, cluster barrier, cluster TMA |
+| 6+ | future | Warp shuffle, ITS, multi-GPU |
 
 ### Phase 1 ✅ — SIMT 基础
 Single SM, cycle-approximate, Hopper-shaped. PTX subset (~30 ops). Shared memory bank conflicts, global memory coalescing, regfile bank conflicts, multi-CTA occupancy.
@@ -95,8 +102,11 @@ Single SM, cycle-approximate, Hopper-shaped. PTX subset (~30 ops). Shared memory
 ### Phase 4 ✅ — Multi-SM + CTA Scheduler + L2 Sharing + TMA Store
 **Multi-SM topology:** default 8 SMs, configurable via `DeviceConfig.n_sm`. **CTA→SM scheduler:** round-robin (`rr`) and greedy policies, selectable via `cfg.scheduler.cta_policy`. **Shared L2 with cross-SM MSHR coalescing:** requests from multiple SMs merge in the shared L2 MSHR, reducing HBM traffic when SMs access overlapping cache lines. **TMA store:** `cp.async.bulk.tensor.2d.global.shared::cta` + `commit_group` / `wait_group` for async smem→gmem transfers. HTML report adds §15–§18; Perfetto adds per-SM swimlane.
 
+### Phase 5 ✅ — Hopper Cluster (CGA) + Distributed Shared Memory + Cluster TMA
+**Hopper Thread-Block Cluster (CGA):** groups of 2/4/8 CTAs share a cluster-scoped address space. **Distributed shared memory (dsmem):** `mapa.shared::cluster` maps a remote CTA's smem address; `ld.shared::cluster` / `st.shared::cluster` perform cross-CTA smem reads/writes. **Two-phase cluster barrier:** `barrier.cluster.arrive` + `barrier.cluster.wait` provide hardware-accelerated cross-CTA synchronization. **Cluster mbarrier:** `mbarrier.init.shared::cluster`, `mbarrier.arrive.shared::cluster`, `mbarrier.try_wait.shared::cluster` extend async-pipeline barriers to cluster scope. **Cluster TMA load:** `cp.async.bulk.tensor.shared::cluster` issues a TMA load that writes directly into a remote CTA's smem, enabling zero-copy distribution of tiles across the cluster. HTML report adds §19–§20 (cluster dispatch、cluster barrier stats); Perfetto adds cluster swimlane.
+
 ## What's NOT modeled
-Thread-block clusters, warp shuffle, ITS, multi-GPU. See `docs/superpowers/specs/2026-05-07-gpusim-phase1-design.md` section 11.
+Warp shuffle, ITS, multi-GPU. See `docs/superpowers/specs/2026-05-07-gpusim-phase1-design.md` section 11.
 
 ## Tutorial
 Read `docs/tutorial/00-intro.md` first.
@@ -122,3 +132,6 @@ Read `docs/tutorial/00-intro.md` first.
 | **16** | **Multi-SM 调度 — CTA→SM 分配策略 (RR / greedy)** |
 | **17** | **L2 sharing — 跨 SM MSHR 合并与命中率** |
 | **18** | **TMA store 流水线 — commit_group / wait_group** |
+| **19** | **Hopper Cluster CGA 入门 — mapa / ld.shared::cluster / cluster barrier** |
+| **20** | **Cluster + wgmma + dsmem — 跨 CTA smem 分块矩阵乘** |
+| **21** | **Cluster TMA 流水线 — cp.async.bulk.tensor.shared::cluster** |

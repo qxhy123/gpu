@@ -147,6 +147,7 @@ class Device:
         from gpusim.core.scheduler import MultiStreamScheduler
         from gpusim.api import MultiStreamResult, Result
         from gpusim.frontend.parser import parse
+        from gpusim.trace.recorder import Recorder
 
         sched = MultiStreamScheduler(streams)
         results_per_stream = {s.stream_id: [] for s in streams}
@@ -158,17 +159,25 @@ class Device:
                 if s.inflight is not None:
                     g = s.inflight
                     kernel = parse(g.ptx_src, "<inline>")
+                    # Create a per-launch recorder so events are captured
+                    per_launch_recorder = Recorder()
+                    saved_recorder = self.recorder
+                    self.recorder = per_launch_recorder
                     dev_res = self.run(
                         kernel=kernel,
                         grid=g.grid,
                         block=g.block,
                         params=g.params,
+                        stream_id=s.stream_id,
+                        kernel_name=g.kernel_name,
                     )
+                    self.recorder = saved_recorder
                     result = Result(
                         outputs=dev_res.outputs,
                         mode="timing",
                         metrics={"cycles": dev_res.cycles,
                                  "occupancy": dev_res.occupancy},
+                        _recorder=per_launch_recorder,
                         _occupancy=dev_res.occupancy,
                         _kernel_name=kernel.name,
                         _grid=g.grid,
@@ -184,4 +193,5 @@ class Device:
         return MultiStreamResult(
             streams=results_per_stream,
             total_cycles=total_cycles,
+            _recorder=getattr(self, "recorder", None),
         )

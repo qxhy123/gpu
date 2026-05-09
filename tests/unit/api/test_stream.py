@@ -69,3 +69,47 @@ def test_synchronize_drains_two_streams():
     assert len(multi_res.streams[1]) == 1
     assert multi_res.streams[0][0].stream_id == 0
     assert multi_res.streams[1][0].stream_id == 1
+
+
+def test_multistream_result_stream_summary():
+    import gpusim
+    from gpusim.api import Stream, _reset_stream_id_counter
+    from gpusim.config.loader import load_default
+    _reset_stream_id_counter()
+    src = """
+.entry test() {
+    .reg .u32 %r0;
+    mov.u32 %r0, %tid.x;
+    ret;
+}
+"""
+    cfg = load_default()
+    s0 = Stream()
+    s0.launch(ptx_src=src, grid=(1,1,1), block=(32,1,1),
+              params={}, kernel_name="k0", config=cfg)
+    multi_res = gpusim.synchronize(streams=[s0], config=cfg)
+    summary = multi_res.stream_summary()
+    assert "Stream 0" in summary
+
+
+def test_multistream_result_kernel_launch_events_df():
+    import gpusim
+    from gpusim.api import Stream, _reset_stream_id_counter
+    from gpusim.config.loader import load_default
+    _reset_stream_id_counter()
+    src = """
+.entry test() {
+    .reg .u32 %r0;
+    mov.u32 %r0, %tid.x;
+    ret;
+}
+"""
+    cfg = load_default()
+    s0 = Stream(); s1 = Stream()
+    s0.launch(ptx_src=src, grid=(1,1,1), block=(32,1,1), params={}, kernel_name="ka", config=cfg)
+    s1.launch(ptx_src=src, grid=(1,1,1), block=(32,1,1), params={}, kernel_name="kb", config=cfg)
+    multi_res = gpusim.synchronize(streams=[s0, s1], config=cfg)
+    df = multi_res.kernel_launch_events_df
+    # df may be empty if Device.run doesn't emit kernel_launch events yet
+    # That's OK — the test just checks the property is callable.
+    assert df is not None

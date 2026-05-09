@@ -396,9 +396,77 @@ class Stream:
 
 @dataclass
 class MultiStreamResult:
-    streams: dict             # int -> list[Result]
+    streams: dict                  # int -> list[Result]
     total_cycles: int = 0
     _recorder: object | None = None
+
+    @property
+    def kernel_launch_events_df(self):
+        from gpusim.viz.notebook import kernel_launch_events_dataframe
+        if self._recorder is not None:
+            return kernel_launch_events_dataframe(self._recorder)
+        # Fallback: build from per-Result recorders
+        import pandas as pd
+        from dataclasses import asdict
+        rows = []
+        for sid, results in self.streams.items():
+            for r in results:
+                if hasattr(r, "_recorder") and r._recorder is not None:
+                    for e in getattr(r._recorder, "kernel_launch_events", []):
+                        rows.append(asdict(e))
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    @property
+    def per_stream_events_df(self):
+        from gpusim.viz.notebook import per_stream_events_dataframe
+        if self._recorder is not None:
+            return per_stream_events_dataframe(self._recorder)
+        return {}
+
+    @property
+    def stream_metrics(self) -> dict:
+        out = {}
+        for sid, results in self.streams.items():
+            cycles = sum(r.metrics.get("cycles", 0) for r in results)
+            ctas = sum(r.metrics.get("active_ctas", 0) for r in results)
+            out[sid] = {
+                "cycles": cycles,
+                "ctas": ctas,
+                "n_launches": len(results),
+            }
+        return out
+
+    def stream_summary(self) -> str:
+        lines = []
+        for sid, results in sorted(self.streams.items()):
+            for r in results:
+                kn = getattr(r, "_kernel_name", None) or getattr(r, "kernel_name", "<unnamed>")
+                cycles = r.metrics.get("cycles", 0)
+                ctas = r.metrics.get("active_ctas", 0)
+                lines.append(f"Stream {sid}: {kn}, {ctas} CTAs, {cycles} cycles")
+        return "\n".join(lines)
+
+    def fairness(self) -> float:
+        from gpusim.analysis.metrics import stream_fairness_jain
+        if self._recorder is None: return 0.0
+        from dataclasses import asdict
+        import pandas as pd
+        rows = [asdict(e) for e in getattr(self._recorder, "cta_dispatch_events", [])]
+        df = pd.DataFrame(rows) if rows else None
+        return stream_fairness_jain(df) if df is not None else 0.0
+
+    def overlap_ratio(self) -> float:
+        from gpusim.analysis.metrics import compute_memory_overlap
+        if self._recorder is None: return 0.0
+        from dataclasses import asdict
+        import pandas as pd
+        mma_evs = getattr(self._recorder, "mma_events", [])
+        instr_evs = getattr(self._recorder, "instr_events", []) or getattr(self._recorder, "instr_issues", [])
+        if callable(instr_evs): instr_evs = instr_evs()
+        mma = pd.DataFrame([asdict(e) for e in mma_evs])
+        mem = pd.DataFrame([asdict(e) for e in instr_evs
+                              if "ld" in getattr(e, "op", "") or "st" in getattr(e, "op", "")])
+        return compute_memory_overlap({"mma": mma, "memory": mem})
 
 
 def synchronize(streams: list = None, *, config=None) -> "MultiStreamResult":

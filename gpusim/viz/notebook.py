@@ -143,3 +143,38 @@ def instr_issue_dataframe(rec):
     if not events:
         return pd.DataFrame(columns=["op"])
     return pd.DataFrame([asdict(e) for e in events])
+
+
+def kernel_launch_events_dataframe(rec):
+    import pandas as pd
+    from dataclasses import asdict
+    if not rec.kernel_launch_events:
+        return pd.DataFrame()
+    return pd.DataFrame([asdict(e) for e in rec.kernel_launch_events])
+
+
+def per_stream_events_dataframe(rec) -> dict:
+    """Returns {stream_id: {event_type: DataFrame, ...}, ...}."""
+    import pandas as pd
+    from dataclasses import asdict
+    out: dict = {}
+    event_lists = {
+        "instr_issue": getattr(rec, "instr_events", []) or getattr(rec, "instr_issues", []),
+        "atomic": getattr(rec, "atomic_events", []),
+        "mma": getattr(rec, "mma_events", []),
+        "bulk_store": getattr(rec, "bulk_store_events", []),
+        "cta_dispatch": getattr(rec, "cta_dispatch_events", []),
+    }
+    all_stream_ids = set()
+    for evs in event_lists.values():
+        if callable(evs): evs = evs()
+        for e in evs:
+            sid = getattr(e, "stream_id", 0)
+            all_stream_ids.add(sid)
+    for sid in all_stream_ids:
+        out[sid] = {}
+        for ev_name, evs in event_lists.items():
+            if callable(evs): evs = evs()
+            filtered = [asdict(e) for e in evs if getattr(e, "stream_id", 0) == sid]
+            out[sid][ev_name] = pd.DataFrame(filtered)
+    return out

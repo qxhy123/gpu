@@ -460,6 +460,17 @@ def l2_bandwidth_per_stream(memory_events_df) -> dict:
     return {int(sid): float(cnt) / total for sid, cnt in counts.items()}
 
 
+def cross_stream_concurrency_gain(kernel_launch_df, total_cycles: int) -> float:
+    """Speedup over sequential drain baseline.
+    Computed as: sum(per-launch cycles) / total_cycles.
+    1.0 = no overlap (sequential); > 1.0 = concurrent benefit; up to N for full overlap."""
+    if kernel_launch_df is None or kernel_launch_df.empty or total_cycles <= 0:
+        return 0.0
+    total_work = sum(max(0, row["complete_cycle"] - row["launch_cycle"])
+                       for _, row in kernel_launch_df.iterrows())
+    return total_work / total_cycles
+
+
 def stream_fairness_jain(cta_dispatch_df) -> float:
     """Jain's fairness index over per-stream CTA dispatch counts:
     (Σ x_i)² / (n · Σ x_i²)   where x_i = CTAs dispatched for stream i.

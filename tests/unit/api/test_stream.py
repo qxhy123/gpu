@@ -142,3 +142,25 @@ def test_stream_in_flight_ctas_settable():
     s = Stream()
     s.in_flight_ctas = 8
     assert s.in_flight_ctas == 8
+
+
+def test_multistream_result_concurrency_gain_method():
+    import gpusim
+    from gpusim.api import Stream, _reset_stream_id_counter
+    from gpusim.config.loader import load_default
+    _reset_stream_id_counter()
+    src = """
+.entry test() {
+    .reg .u32 %r0;
+    mov.u32 %r0, %tid.x;
+    ret;
+}
+"""
+    cfg = load_default()
+    s0 = Stream(); s1 = Stream()
+    s0.launch(ptx_src=src, grid=(1,1,1), block=(32,1,1), params={}, kernel_name="ka", config=cfg)
+    s1.launch(ptx_src=src, grid=(1,1,1), block=(32,1,1), params={}, kernel_name="kb", config=cfg)
+    multi_res = gpusim.synchronize(streams=[s0, s1], config=cfg)
+    gain = multi_res.cross_stream_concurrency_gain()
+    assert isinstance(gain, float)
+    assert gain >= 0.0

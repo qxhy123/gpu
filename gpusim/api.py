@@ -472,6 +472,12 @@ class MultiStreamResult:
                               if "ld" in getattr(e, "op", "") or "st" in getattr(e, "op", "")])
         return compute_memory_overlap({"mma": mma, "memory": mem})
 
+    def cross_stream_concurrency_gain(self) -> float:
+        from gpusim.analysis.metrics import cross_stream_concurrency_gain
+        df = self.kernel_launch_events_df
+        if df is None or df.empty: return 0.0
+        return cross_stream_concurrency_gain(df, self.total_cycles or 1)
+
 
 def synchronize(streams: list = None, *, config=None) -> "MultiStreamResult":
     """Drain all given streams; return aggregated MultiStreamResult.

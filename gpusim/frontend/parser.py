@@ -266,6 +266,9 @@ class _Parser:
             if self.peek().kind == "NUM":
                 srcs.append(self._parse_operand(PtxType.s32))
             return [], srcs
+        # Phase 5: barrier.cluster.{arrive,wait} — no operands
+        if op in ("barrier.cluster.arrive", "barrier.cluster.wait"):
+            return [], []
         if op.startswith("membar"):
             return [], []
 

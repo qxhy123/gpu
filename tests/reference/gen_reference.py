@@ -92,6 +92,11 @@ SUPPORTED_KERNELS = [
     "cluster_cooperative_epilogue",
     "atom_cas_spinlock",
     "red_min_max",
+    # Phase 7 additions
+    "concurrent_vector_add_2stream",
+    "compute_vs_memory_overlap",
+    "l2_contention_2stream",
+    "stream_priority_serial_vs_concurrent",
 ]
 
 

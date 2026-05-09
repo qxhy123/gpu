@@ -498,3 +498,50 @@ def priority_dispatch_share(cta_dispatch_df, stream_priority: dict) -> dict:
         counts[p] = counts.get(p, 0) + 1
     total = max(sum(counts.values()), 1)
     return {p: c / total for p, c in counts.items()}
+
+
+def event_wait_cycles_per_stream(stream_event_df) -> dict:
+    """Total cycles each stream spent event-blocked. Pairs wait_start with wait_satisfied
+    per (stream_id, event_id)."""
+    if stream_event_df is None or stream_event_df.empty:
+        return {}
+    out = {}
+    pending_starts = {}
+    sorted_df = stream_event_df.sort_values("cycle")
+    for _, ev in sorted_df.iterrows():
+        key = (int(ev["stream_id"]), int(ev["event_id"]))
+        if ev["op"] == "wait_start":
+            pending_starts[key] = int(ev["cycle"])
+        elif ev["op"] == "wait_satisfied" and key in pending_starts:
+            cycles = int(ev["cycle"]) - pending_starts.pop(key)
+            sid = int(ev["stream_id"])
+            out[sid] = out.get(sid, 0) + cycles
+    return out
+
+
+def event_chain_critical_path(stream_event_df, kernel_launch_df) -> int:
+    """Longest event-mediated dependency chain in cycles."""
+    if stream_event_df is None or stream_event_df.empty:
+        return 0
+    if kernel_launch_df is None or kernel_launch_df.empty:
+        return 0
+    record_cycles = {int(r["event_id"]): int(r["cycle"])
+                       for _, r in stream_event_df.iterrows()
+                       if r["op"] == "record"}
+    max_chain = 0
+    for _, launch in kernel_launch_df.iterrows():
+        duration = int(launch["complete_cycle"]) - int(launch["launch_cycle"])
+        sid = int(launch["stream_id"])
+        waits = stream_event_df[(stream_event_df["stream_id"] == sid)
+                                  & (stream_event_df["op"] == "wait_satisfied")]
+        wait_max = 0
+        for _, w in waits.iterrows():
+            ev_id = int(w["event_id"])
+            wait_max = max(wait_max, record_cycles.get(ev_id, 0))
+        chain = wait_max + duration
+        max_chain = max(max_chain, chain)
+    if not kernel_launch_df.empty:
+        max_solo = max(int(r["complete_cycle"]) - int(r["launch_cycle"])
+                         for _, r in kernel_launch_df.iterrows())
+        max_chain = max(max_chain, max_solo)
+    return max_chain

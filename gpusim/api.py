@@ -539,6 +539,25 @@ class MultiStreamResult:
                              for s in (self._stream_refs or [])}
         return priority_dispatch_share(df, stream_priority)
 
+    def event_wait_cycles_per_stream(self) -> dict:
+        from gpusim.analysis.metrics import event_wait_cycles_per_stream
+        if self._recorder is None: return {}
+        from dataclasses import asdict
+        import pandas as pd
+        rows = [asdict(e) for e in getattr(self._recorder, "stream_event_events", [])]
+        df = pd.DataFrame(rows) if rows else None
+        return event_wait_cycles_per_stream(df)
+
+    def event_chain_critical_path(self) -> int:
+        from gpusim.analysis.metrics import event_chain_critical_path
+        if self._recorder is None: return 0
+        from dataclasses import asdict
+        import pandas as pd
+        se_rows = [asdict(e) for e in getattr(self._recorder, "stream_event_events", [])]
+        se_df = pd.DataFrame(se_rows) if se_rows else None
+        kl_df = self.kernel_launch_events_df
+        return event_chain_critical_path(se_df, kl_df)
+
 
 def synchronize(streams: list = None, *, config=None) -> "MultiStreamResult":
     """Drain all given streams; return aggregated MultiStreamResult.

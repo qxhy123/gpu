@@ -36,3 +36,28 @@ def test_priority_dispatch_share():
     assert abs(out["high"] - 4/7) < 0.01
     assert abs(out["normal"] - 2/7) < 0.01
     assert abs(out["low"] - 1/7) < 0.01
+
+
+def test_event_wait_cycles_per_stream():
+    from gpusim.analysis.metrics import event_wait_cycles_per_stream
+    df = pd.DataFrame([
+        {"cycle": 10, "event_id": 1, "stream_id": 1, "op": "wait_start"},
+        {"cycle": 60, "event_id": 1, "stream_id": 1, "op": "wait_satisfied"},
+    ])
+    out = event_wait_cycles_per_stream(df)
+    assert out[1] == 50
+
+
+def test_event_chain_critical_path():
+    from gpusim.analysis.metrics import event_chain_critical_path
+    se_df = pd.DataFrame([
+        {"cycle": 100, "event_id": 1, "stream_id": 0, "op": "record"},
+        {"cycle": 100, "event_id": 1, "stream_id": 1, "op": "wait_satisfied"},
+    ])
+    kl_df = pd.DataFrame([
+        {"stream_id": 0, "launch_cycle": 0, "complete_cycle": 100, "kernel_name": "a"},
+        {"stream_id": 1, "launch_cycle": 100, "complete_cycle": 200, "kernel_name": "b"},
+    ])
+    cp = event_chain_critical_path(se_df, kl_df)
+    # a (100) → ev1 → b (100) = 200 total
+    assert cp == 200

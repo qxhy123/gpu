@@ -599,3 +599,25 @@ def l2_eviction_protected_count(gmem_events_df) -> dict:
         else:
             out[int(sid)] = 0
     return out
+
+
+def nvlink_bandwidth_utilization(nvlink_df, total_cycles: int) -> dict:
+    """Per-link bytes/cycle utilization."""
+    if nvlink_df is None or nvlink_df.empty or total_cycles <= 0:
+        return {}
+    out = {}
+    for (src, dst), group in nvlink_df.groupby(["src_gpu", "dst_gpu"]):
+        total_bytes = group["n_bytes"].sum()
+        out[(int(src), int(dst))] = float(total_bytes) / total_cycles
+    return out
+
+
+def collective_op_breakdown(collective_df) -> dict:
+    """Cycles per (op_name, algorithm)."""
+    if collective_df is None or collective_df.empty:
+        return {}
+    out = {}
+    for (name, algo), group in collective_df.groupby(["op_name", "algorithm"]):
+        cycles = (group["end_cycle"] - group["start_cycle"]).sum()
+        out[(str(name), str(algo))] = int(cycles)
+    return out

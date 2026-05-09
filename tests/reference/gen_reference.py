@@ -108,6 +108,11 @@ SUPPORTED_KERNELS = [
     "phase8_overlap_real",
     "multi_event_fan_in",
     "event_timing_benchmark",
+    # Phase 10 additions
+    "multi_gpu_setup",
+    "ring_allreduce",
+    "tree_allreduce",
+    "ddp_training_step",
 ]
 
 

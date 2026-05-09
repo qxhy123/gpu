@@ -16,16 +16,22 @@ class L2Protocol(Protocol):
 @dataclass
 class Hit:
     ready_at: int
+    was_l2_hit: bool = True   # L1 hit implies the line was already resident
+    in_window: bool = False   # whether the L2 line is in a protected window
 
 @dataclass
 class MissNewMSHR:
     ready_at: int
     mshr_slot: int
+    was_l2_hit: bool = False  # new MSHR allocation = L2 miss
+    in_window: bool = False
 
 @dataclass
 class MissMergeMSHR:
     ready_at: int
     mshr_slot: int
+    was_l2_hit: bool = True   # merged into existing MSHR = L2 already has/is fetching it
+    in_window: bool = False
 
 @dataclass
 class Reject:
@@ -54,7 +60,8 @@ class L1Cache:
         self._pending_installs: list[tuple[int, int]] = []  # (line_addr, install_at)
 
     def access(self, *, line_addr: int, warp_id: int, dst_regs: tuple[str, ...],
-               mode: str, now: int) -> AccessResult:
+               mode: str, now: int,
+               requesting_stream_id: int = -1) -> AccessResult:
         set_idx = line_addr & self._set_mask
         tag = line_addr >> self._set_bits
         line = self._sets[set_idx].find(tag)
@@ -64,17 +71,23 @@ class L1Cache:
             self._sets[set_idx].touch(line)
             way = self._sets[set_idx]._lines.index(line)
             if mode == "store":
-                self.l2.write_through(line_addr=line_addr, now=now)
+                self.l2.write_through(line_addr=line_addr, now=now,
+                                      requesting_stream_id=requesting_stream_id)
             if self._recorder is not None:
                 self._recorder.l1_access(cycle=now, warp_id=warp_id, kind="HIT",
                                          line_addr=line_addr, set_idx=set_idx, way=way)
-            return Hit(ready_at=now + (1 if mode == "store" else self.cfg.l1_hit_latency))
+            # Query L2 for in_window status of this line
+            in_window = self._query_l2_in_window(line_addr)
+            return Hit(ready_at=now + (1 if mode == "store" else self.cfg.l1_hit_latency),
+                       was_l2_hit=True, in_window=in_window)
 
         # store-miss: write-through to L2, no-write-allocate at L1
         if mode == "store":
-            self.l2.write_through(line_addr=line_addr, now=now)
+            self.l2.write_through(line_addr=line_addr, now=now,
+                                  requesting_stream_id=requesting_stream_id)
             # no L1 event for store-miss bypass (line wasn't in L1)
-            return Hit(ready_at=now + 1)
+            in_window = self._query_l2_in_window(line_addr)
+            return Hit(ready_at=now + 1, was_l2_hit=True, in_window=in_window)
 
         # load miss — try MSHR merge
         existing = self._mshr.find_for_line(line_addr)
@@ -87,14 +100,16 @@ class L1Cache:
                     mshr_slot=existing.slot_id,
                 )
             return MissMergeMSHR(ready_at=existing.expected_complete,
-                                 mshr_slot=existing.slot_id)
+                                 mshr_slot=existing.slot_id,
+                                 was_l2_hit=True, in_window=False)
 
         if self._mshr.is_full():
             return Reject()
 
         # allocate new MSHR + downstream fetch
         l2_complete = self.l2.fetch(line_addr=line_addr, now=now,
-                                      sm_id=self.sm_id)
+                                      sm_id=self.sm_id,
+                                      requesting_stream_id=requesting_stream_id)
         if l2_complete < 0:
             return Reject(reason="L2_MSHR_FULL")
         expected_complete = l2_complete + self.cfg.l1_miss_check_latency
@@ -110,7 +125,27 @@ class L1Cache:
             )
         # schedule install
         self._pending_installs.append((line_addr, expected_complete))
-        return MissNewMSHR(ready_at=expected_complete, mshr_slot=mshr.slot_id)
+        return MissNewMSHR(ready_at=expected_complete, mshr_slot=mshr.slot_id,
+                           was_l2_hit=False, in_window=False)
+
+    def _query_l2_in_window(self, line_addr: int) -> bool:
+        """Return True if the line at *line_addr* is marked in_window in L2."""
+        l2 = self.l2
+        if l2 is None:
+            return False
+        line_bytes = getattr(l2, '_line_bytes', 128)
+        set_bits = getattr(l2, '_set_bits', 0)
+        set_mask = getattr(l2, '_set_mask', 0)
+        sets = getattr(l2, '_sets', {})
+        set_idx = line_addr & set_mask
+        tag = line_addr >> set_bits
+        cs = sets.get(set_idx)
+        if cs is None:
+            return False
+        line = cs.find(tag)
+        if line is None:
+            return False
+        return bool(getattr(line, 'in_window', False))
 
     def install_completed_lines(self, *, now: int) -> list[int]:
         """Install any MSHR entries whose expected_complete <= now. Returns list

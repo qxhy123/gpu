@@ -783,11 +783,14 @@ class SubCore:
                 line_addrs = sorted({a // line_size for a in addrs if a >= 0})
                 mode = "load" if op.startswith("ld.") else "store"
                 max_ready = now
+                l1_hit = True   # assume hit until we see a miss result
+                l1_in_window = False
                 for la in line_addrs:
                     res = self.l1.access(
                         line_addr=la, warp_id=w.warp_id,
                         dst_regs=tuple(_dst_regs(instr)) if mode == "load" else (),
                         mode=mode, now=now,
+                        requesting_stream_id=sid,
                     )
                     if isinstance(res, Reject):
                         # MSHR pool full — rollback: don't mark scoreboard / advance PC
@@ -798,17 +801,24 @@ class SubCore:
                             w._mshr_full_stall = True
                         return
                     max_ready = max(max_ready, res.ready_at)
+                    if not getattr(res, "was_l2_hit", True):
+                        l1_hit = False
+                    if getattr(res, "in_window", False):
+                        l1_in_window = True
                 latency = max_ready - now
             else:
                 # Phase 1 fixed-latency path (fallback when no L1)
                 if op.startswith("ld.global."):
                     latency += gmem_n_tx - 1
+                l1_hit = False
+                l1_in_window = False
 
             if self.recorder is not None:
                 self.recorder.gmem_access(
                     cycle=now, warp_id=w.warp_id,
                     n_transactions=info.n_transactions, efficiency=info.efficiency,
                     addresses=addrs, stream_id=sid,
+                    hit=l1_hit, in_window=l1_in_window,
                 )
 
         # operand collector bank conflict

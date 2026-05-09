@@ -163,3 +163,59 @@ def test_cache_set_install_none_check_evicts_lru():
                         line_in_window_check=None)
     assert victim is not None
     assert victim.tag == lru_tag
+
+
+# ---------------------------------------------------------------------------
+# T9: SubCore gmem path records hit/in_window in GmemEvent (end-to-end)
+# ---------------------------------------------------------------------------
+
+def test_gmem_event_carries_hit_and_in_window():
+    """End-to-end: gmem load via SubCore records hit and in_window in GmemEvent."""
+    import gpusim
+    from gpusim.api import Stream, _reset_stream_id_counter
+    from gpusim.config.loader import load_default
+    _reset_stream_id_counter()
+    src = """
+.entry test(.param .u64 IN, .param .u64 OUT) {
+    .reg .u64 %rd<6>;
+    .reg .u32 %r<4>;
+    ld.param.u64 %rd0, [IN];
+    ld.param.u64 %rd1, [OUT];
+    mov.u32 %r0, %tid.x;
+    shl.b32 %r1, %r0, 2;
+    cvt.u64.u32 %rd2, %r1;
+    add.u64 %rd3, %rd0, %rd2;
+    ld.global.u32 %r2, [%rd3];
+    add.u64 %rd4, %rd1, %rd2;
+    st.global.u32 [%rd4], %r2;
+    ret;
+}
+"""
+    import numpy as np
+    n = 32
+    IN = np.arange(n, dtype=np.uint32)
+    OUT = np.zeros(n, dtype=np.uint32)
+    cfg = load_default()
+    s = Stream()
+    s.launch(ptx_src=src, grid=(1,1,1), block=(32,1,1),
+             params={"IN": IN, "OUT": OUT}, kernel_name="copy", config=cfg)
+    multi_res = gpusim.synchronize(streams=[s], config=cfg)
+
+    rec = multi_res._recorder
+    if rec is not None:
+        gmem_events = rec.gmem_accesses()
+        # GmemEvent fields hit/in_window must exist and be booleans
+        assert gmem_events, "Expected at least one GmemEvent from ld.global/st.global"
+        ev = gmem_events[0]
+        assert hasattr(ev, "hit"), "GmemEvent missing 'hit' field"
+        assert hasattr(ev, "in_window"), "GmemEvent missing 'in_window' field"
+        assert isinstance(ev.hit, bool), f"hit should be bool, got {type(ev.hit)}"
+        assert isinstance(ev.in_window, bool), f"in_window should be bool, got {type(ev.in_window)}"
+        # First ld.global access should be a miss (cold cache)
+        assert ev.hit is False, (
+            f"First ld.global on cold cache should record hit=False, got {ev.hit}"
+        )
+        # No stream window registered → in_window should be False
+        assert ev.in_window is False, (
+            f"No stream window registered → in_window should be False, got {ev.in_window}"
+        )

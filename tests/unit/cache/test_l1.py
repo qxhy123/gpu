@@ -9,11 +9,13 @@ class MockL2:
         self.requests: list[tuple[int, int]] = []  # (line_addr, request_at)
         self.write_throughs: list[tuple[int, int]] = []  # (line_addr, now)
 
-    def fetch(self, line_addr: int, now: int, sm_id: int = -1) -> int:
+    def fetch(self, line_addr: int, now: int, sm_id: int = -1,
+              requesting_stream_id: int = -1) -> int:
         self.requests.append((line_addr, now))
         return now + self.latency
 
-    def write_through(self, line_addr: int, now: int) -> None:
+    def write_through(self, line_addr: int, now: int,
+                      requesting_stream_id: int = -1) -> None:
         self.write_throughs.append((line_addr, now))
 
 
@@ -98,7 +100,7 @@ def test_eviction_silent_no_writeback():
 def test_store_miss_propagates_write_through_to_l2():
     """Per spec §3.4: store-miss bypasses L1 (no-write-allocate) but
     still flows write-through to L2."""
-    from unittest.mock import MagicMock
+    from unittest.mock import MagicMock, call
     cfg = CacheConfig()
     l2 = MagicMock()
     l2.fetch = MagicMock(return_value=200)
@@ -107,7 +109,10 @@ def test_store_miss_propagates_write_through_to_l2():
     res = l1.access(line_addr=0x100, warp_id=0, dst_regs=(),
                     mode="store", now=10)
     assert isinstance(res, Hit)
-    l2.write_through.assert_called_once_with(line_addr=0x100, now=10)
+    l2.write_through.assert_called_once()
+    call_kwargs = l2.write_through.call_args[1]
+    assert call_kwargs.get("line_addr") == 0x100
+    assert call_kwargs.get("now") == 10
 
 
 def test_store_hit_propagates_write_through_to_l2():
@@ -127,6 +132,7 @@ def test_store_hit_propagates_write_through_to_l2():
     res2 = l1.access(line_addr=0x100, warp_id=0, dst_regs=(),
                      mode="store", now=res.ready_at + 10)
     assert isinstance(res2, Hit)
-    l2.write_through.assert_called_once_with(
-        line_addr=0x100, now=res.ready_at + 10
-    )
+    l2.write_through.assert_called_once()
+    call_kwargs = l2.write_through.call_args[1]
+    assert call_kwargs.get("line_addr") == 0x100
+    assert call_kwargs.get("now") == res.ready_at + 10

@@ -50,6 +50,12 @@ class Device:
         hbm = HBM(self.cfg.hbm, recorder=self.recorder)
         l2 = L2Cache(self.cfg.cache, hbm, recorder=self.recorder)
 
+        # Phase 8 M4: apply any pre-registered stream L2 windows
+        stream_windows = getattr(self, "_stream_windows", {})
+        if stream_id in stream_windows:
+            start_set, n_sets = stream_windows[stream_id]
+            l2.register_stream_window(stream_id, start_set, n_sets)
+
         sms = []
         for i in range(self.n_sm):
             sm = SM(self.cfg.sm, sm_id=i, recorder=self.recorder, l2=l2, hbm=hbm)
@@ -152,6 +158,12 @@ class Device:
         weights = getattr(getattr(self.cfg, "scheduler", None), "priority_weights", None)
         sched = ConcurrentStreamScheduler(streams, priority_weights=weights)
         results_per_stream = {s.stream_id: [] for s in streams}
+
+        # Phase 8 M4: register per-stream L2 windows so run() can apply them
+        self._stream_windows = {}
+        for s in streams:
+            if s.l2_window is not None:
+                self._stream_windows[s.stream_id] = s.l2_window
 
         while not all(s.is_idle() for s in streams):
             for s in streams:

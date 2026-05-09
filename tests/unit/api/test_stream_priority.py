@@ -51,3 +51,12 @@ def test_scheduler_uses_priority_weights():
     # high gets weight 4, low gets weight 1
     assert counts[s_high.stream_id] == 4
     assert counts[s_low.stream_id] == 1
+
+
+def test_stream_set_l2_window():
+    from gpusim.api import Stream, _reset_stream_id_counter
+    _reset_stream_id_counter()
+    s = Stream()
+    assert s.l2_window is None
+    s.set_l2_window(start_set=0, n_sets=32)
+    assert s.l2_window == (0, 32)

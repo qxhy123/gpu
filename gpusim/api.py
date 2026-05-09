@@ -422,6 +422,7 @@ class Stream:
     in_flight_ctas: int = 0     # NEW Phase 8 — count of dispatched CTAs not yet retired
     priority: str = "normal"    # NEW Phase 8 — "high" | "normal" | "low"
     event_waits: list = field(default_factory=list)    # NEW Phase 8 — Events this stream is waiting on
+    l2_window: tuple | None = None     # NEW Phase 8 — (start_set, n_sets)
 
     def __post_init__(self):
         if self.priority not in ("high", "normal", "low"):
@@ -438,6 +439,10 @@ class Stream:
     def record(self, ev: Event) -> None:
         """Append a record-marker to pending; signals ev when prior pending+inflight retire."""
         self.pending.append(_RecordMarker(event=ev))
+
+    def set_l2_window(self, *, start_set: int, n_sets: int) -> None:
+        """Reserve L2 sets [start_set, start_set+n_sets) as protected window."""
+        self.l2_window = (start_set, n_sets)
 
     def wait(self, ev: Event) -> None:
         """Block this stream's future launches until ev is signaled."""

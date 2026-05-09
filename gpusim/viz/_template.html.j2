@@ -124,6 +124,21 @@
 {{ per_stream_breakdown_html | safe }}
 {% endif %}
 
+{% if priority_dispatch_html %}
+<h2>§29 Priority dispatch breakdown</h2>
+{{ priority_dispatch_html | safe }}
+{% endif %}
+
+{% if event_timeline_html %}
+<h2>§30 Event timeline</h2>
+{{ event_timeline_html | safe }}
+{% endif %}
+
+{% if l2_window_heatmap_html %}
+<h2>§31 L2 window heatmap</h2>
+{{ l2_window_heatmap_html | safe }}
+{% endif %}
+
 <script>
 Plotly.newPlot("stall_pie", {{ stall_pie_json|safe }}, {});
 Plotly.newPlot("ipc_line", {{ ipc_line_json|safe }}, {});

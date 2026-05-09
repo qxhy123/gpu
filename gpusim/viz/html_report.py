@@ -212,6 +212,9 @@ def build_html(rec: Recorder, *, kernel_name: str, grid, block,
         cooperative_epilogue_html=_render_cooperative_epilogue(rec),
         stream_concurrency_html=_render_stream_concurrency(rec),
         per_stream_breakdown_html=_render_per_stream_breakdown(rec),
+        priority_dispatch_html=_render_priority_dispatch(rec),
+        event_timeline_html=_render_event_timeline(rec),
+        l2_window_heatmap_html=_render_l2_window_heatmap(rec),
     )
 
 
@@ -268,6 +271,30 @@ def _render_cooperative_epilogue(rec):
     import pandas as pd
     df = pd.DataFrame([asdict(e) for e in rec.bulk_store_events])
     return "<h3>Cooperative epilogue (bulk store events)</h3>" + df.to_html(index=False)
+
+
+def _render_priority_dispatch(rec):
+    if not getattr(rec, "kernel_launch_events", None):
+        return ""
+    from dataclasses import asdict
+    import pandas as pd
+    df = pd.DataFrame([asdict(e) for e in rec.kernel_launch_events])
+    return "<h3>Kernel launches by stream</h3>" + df.to_html(index=False)
+
+
+def _render_event_timeline(rec):
+    if not getattr(rec, "stream_event_events", None):
+        return ""
+    from dataclasses import asdict
+    import pandas as pd
+    df = pd.DataFrame([asdict(e) for e in rec.stream_event_events])
+    return "<h3>Stream events timeline</h3>" + df.to_html(index=False)
+
+
+def _render_l2_window_heatmap(rec):
+    if not getattr(rec, "instr_events", None) and not getattr(rec, "instr_issues", None):
+        return ""
+    return "<h3>L2 access (placeholder for window heatmap)</h3>"
 
 
 def _render_stream_concurrency(rec):

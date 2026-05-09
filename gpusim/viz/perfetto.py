@@ -189,6 +189,17 @@ def build_perfetto(rec: Recorder) -> dict:
             },
         })
 
+    # Phase 8 stream events as instant events
+    for ev in getattr(rec, "stream_event_events", []):
+        events.append({
+            "name": f"event_{ev.op}_{ev.event_id}",
+            "cat": "stream_event", "ph": "i",
+            "ts": ev.cycle, "s": "g",
+            "pid": f"Stream-{ev.stream_id}",
+            "tid": "events",
+            "args": {"event_id": ev.event_id, "op": ev.op},
+        })
+
     return {"traceEvents": events, "displayTimeUnit": "ns"}
 
 

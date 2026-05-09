@@ -127,3 +127,18 @@ def test_result_carries_kernel_name():
     res = gpusim.run(ptx_src=src, grid=(1,1,1), block=(32,1,1),
                       params={}, mode="timing", kernel_name="my_k")
     assert res.kernel_name == "my_k"
+
+
+def test_stream_in_flight_ctas_default_zero():
+    from gpusim.api import Stream, _reset_stream_id_counter
+    _reset_stream_id_counter()
+    s = Stream()
+    assert s.in_flight_ctas == 0
+
+
+def test_stream_in_flight_ctas_settable():
+    from gpusim.api import Stream, _reset_stream_id_counter
+    _reset_stream_id_counter()
+    s = Stream()
+    s.in_flight_ctas = 8
+    assert s.in_flight_ctas == 8

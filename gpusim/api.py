@@ -384,6 +384,7 @@ class Stream:
     pending: "deque[GridLaunch]" = field(default_factory=deque)
     inflight: GridLaunch | None = None
     completed: list = field(default_factory=list)
+    in_flight_ctas: int = 0     # NEW Phase 8 — count of dispatched CTAs not yet retired
 
     def launch(self, ptx_src: str, grid: tuple, block: tuple,
                params: dict, *, kernel_name: str = "<unnamed>",

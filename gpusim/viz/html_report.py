@@ -206,7 +206,38 @@ def build_html(rec: Recorder, *, kernel_name: str, grid, block,
         cta_dispatch_html=_render_cta_dispatch(rec),
         l2_mshr_pressure_html=_render_l2_mshr_pressure(rec, cycles),
         bulk_store_table_html=_render_bulk_store_table(rec),
+        cluster_timeline_html=_render_cluster_timeline(rec),
+        dsmem_traffic_html=_render_dsmem_traffic(rec),
     )
+
+
+def _render_cluster_timeline(rec):
+    from dataclasses import asdict
+    if not rec.cluster_dispatch_events and not rec.cluster_barrier_events:
+        return ""
+    import pandas as pd
+    parts = []
+    if rec.cluster_dispatch_events:
+        df = pd.DataFrame([asdict(e) for e in rec.cluster_dispatch_events])
+        parts.append("<h3>Cluster dispatches</h3>" + df.to_html(index=False))
+    if rec.cluster_barrier_events:
+        df = pd.DataFrame([asdict(e) for e in rec.cluster_barrier_events])
+        parts.append("<h3>Cluster barrier events</h3>" + df.to_html(index=False))
+    return "\n".join(parts)
+
+
+def _render_dsmem_traffic(rec):
+    if not rec.cluster_dispatch_events:
+        return ""
+    from dataclasses import asdict
+    import pandas as pd
+    from gpusim.analysis.metrics import dsmem_remote_access_rate
+    events = rec.instr_issues()
+    if not events:
+        return ""
+    instr_df = pd.DataFrame([asdict(e) for e in events])
+    rate = dsmem_remote_access_rate(instr_df)
+    return f"<p>dsmem remote access rate: <b>{rate*100:.1f}%</b></p>"
 
 
 def save_html(rec: Recorder, path: str | Path, **kwargs) -> None:

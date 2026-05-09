@@ -94,6 +94,16 @@
 {{ bulk_store_table_html | safe }}
 {% endif %}
 
+{% if cluster_timeline_html %}
+<h2>§19 Cluster dispatch + barrier timeline</h2>
+{{ cluster_timeline_html | safe }}
+{% endif %}
+
+{% if dsmem_traffic_html %}
+<h2>§20 dsmem cross-CTA traffic</h2>
+{{ dsmem_traffic_html | safe }}
+{% endif %}
+
 <script>
 Plotly.newPlot("stall_pie", {{ stall_pie_json|safe }}, {});
 Plotly.newPlot("ipc_line", {{ ipc_line_json|safe }}, {});

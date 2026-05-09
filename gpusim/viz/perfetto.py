@@ -141,6 +141,25 @@ def build_perfetto(rec: Recorder) -> dict:
                 "args": {"sm_id": ev.sm_id, "wait_n": ev.wait_n},
             })
 
+    # Phase 5: cluster dispatch instants
+    for ev in rec.cluster_dispatch_events:
+        events.append({
+            "name": f"Cluster {ev.cluster_id} dispatched",
+            "cat": "cluster", "ph": "i", "ts": ev.cycle,
+            "pid": f"Cluster{ev.cluster_id}", "tid": "dispatch",
+            "args": {"sm_ids": list(ev.sm_ids), "cta_ids": list(ev.cta_ids)},
+        })
+
+    # Cluster barrier events
+    for ev in rec.cluster_barrier_events:
+        events.append({
+            "name": f"barrier.cluster.{ev.kind.lower()}",
+            "cat": "cluster_barrier", "ph": "i", "ts": ev.cycle,
+            "pid": f"Cluster{ev.cluster_id}", "tid": "barrier",
+            "args": {"cta_id": ev.cta_id, "rank": ev.rank, "sm_id": ev.sm_id,
+                     "arrived_count": ev.arrived_count},
+        })
+
     return {"traceEvents": events, "displayTimeUnit": "ns"}
 
 

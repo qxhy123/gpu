@@ -185,6 +185,47 @@ class SharedMemory:
     def store_f16(self, cta_id: int, offset: int, value: float) -> None:
         self._cta[cta_id][offset:offset+2].view(np.float16)[0] = np.float16(value)
 
+    def atomic_op(self, cta_id: int, offset: int, op: str, val,
+                  ty) -> "old":
+        """Atomically read-modify-write at smem[cta_id][offset]. Returns old value.
+
+        op: "add" | "min" | "max" | "exch" | "cas"
+        For "cas": val is (expected, new_val) tuple.
+        ty: PtxType (u32, s32, f32)
+        """
+        from gpusim.frontend.ir import PtxType
+        if ty is PtxType.f32:
+            old = self.load_f32(cta_id, offset)
+            new = self._apply_op_f32(op, old, val)
+            self.store_f32(cta_id, offset, new)
+            return old
+        old = self.load_u32(cta_id, offset)
+        new = self._apply_op_int(op, old, val)
+        self.store_u32(cta_id, offset, new)
+        return old
+
+    @staticmethod
+    def _apply_op_int(op: str, old: int, val) -> int:
+        if op == "add": return (old + int(val)) & 0xFFFFFFFF
+        if op == "min": return min(old, int(val))
+        if op == "max": return max(old, int(val))
+        if op == "exch": return int(val) & 0xFFFFFFFF
+        if op == "cas":
+            expected, new_val = val
+            return int(new_val) & 0xFFFFFFFF if old == int(expected) else old
+        raise ValueError(f"unknown atomic op {op!r}")
+
+    @staticmethod
+    def _apply_op_f32(op: str, old: float, val) -> float:
+        if op == "add": return float(old) + float(val)
+        if op == "min": return min(float(old), float(val))
+        if op == "max": return max(float(old), float(val))
+        if op == "exch": return float(val)
+        if op == "cas":
+            expected, new_val = val
+            return float(new_val) if old == float(expected) else old
+        raise ValueError(f"unknown atomic op {op!r}")
+
 
 class ParamSpace:
     def __init__(self, params: dict[str, int]):

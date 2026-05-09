@@ -556,6 +556,64 @@ class SubCore:
             w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return
 
+        if op.startswith("atom.shared.") or op.startswith("red.shared."):
+            is_atom = op.startswith("atom.")
+            # op_name: "atom.shared.add.u32" -> parts[2] = "add"
+            op_name = op.split(".")[2]
+            ty = instr.type
+            # Sync active_mask from SIMT stack
+            w.fn_state.active_mask = w.stack.top().active_mask
+            w.fn_state.pc = w.stack.top().pc
+            # Per-lane functional update
+            ex = w.executor if w.executor is not None else self.executor
+            for lane in range(32):
+                if not ex._lane_active(w.fn_state, lane, instr):
+                    continue
+                t = w.fn_state.threads[lane]
+                addr = t.get_u64(instr.src[0].name)
+                val = ex._read(t, instr.src[1], ty)
+                if op_name == "cas":
+                    expected = val
+                    new_val = ex._read(t, instr.src[2], ty)
+                    val_passed = (expected, new_val)
+                else:
+                    val_passed = val
+                old = self.smem.atomic_op(w.cta_id, int(addr), op_name, val_passed, ty)
+                if is_atom:
+                    ex._write(t, instr.dst[0], old, ty)
+            # Timing: smem_latency + bank_conflict * smem_atomic_op_extra_latency
+            from gpusim.core.smem import bank_conflict_degree
+            from gpusim.core.exec import shared_addresses_for_warp
+            addrs = shared_addresses_for_warp(w.fn_state, instr)
+            bank_conflict = bank_conflict_degree(
+                addrs, active_mask=w.fn_state.active_mask, banks=self.cfg.smem_banks,
+            )
+            cache_cfg = (getattr(self.cfg, "_cache_for_run", None)
+                         or getattr(self.cfg, "cache", None))
+            atomic_extra = (getattr(cache_cfg, "smem_atomic_op_extra_latency", 4)
+                            if cache_cfg else 4)
+            latency = self.cfg.fu.smem_latency + bank_conflict * atomic_extra
+            completion = now + latency
+            # Trace
+            if self.recorder is not None:
+                self.recorder.atomic(
+                    cycle=now, sm_id=getattr(self, "sm_id", -1),
+                    warp_id=w.warp_id, kind="ATOM" if is_atom else "RED",
+                    op=op_name, space="shared",
+                    line_addr=int(addrs[0]) if addrs and addrs[0] >= 0 else 0,
+                    latency=latency, n_lanes=sum(1 for a in addrs if a >= 0),
+                )
+                self.recorder.instr_issue(
+                    cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
+                    src_loc=(instr.src_loc.file, instr.src_loc.line),
+                    active_mask=w.fn_state.active_mask,
+                )
+            if is_atom and instr.dst:
+                w.scoreboard.mark_write(instr.dst[0].name, completion, origin="atomic")
+            w.stack.update_top_pc(w.stack.top().pc + 1)
+            w.stack.maybe_pop()
+            return
+
         if op.startswith("mbarrier.try_wait."):
             # dst[0] = pred result reg, src[0] = mbar addr reg, src[1] = expected_phase imm
             pred_reg = instr.dst[0]

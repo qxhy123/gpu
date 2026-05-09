@@ -511,6 +511,10 @@ class InstrExecutor:
                 else:                  self.smem.store_u32(self.cta_id, addr, int(v))
             return
 
+        # atom.shared / red.shared — handled at SubCore._issue; per-lane is no-op
+        if op.startswith("atom.shared.") or op.startswith("red.shared."):
+            return
+
         # gpusim.tma_desc — allocate descriptor (only lane 0 acts)
         if op == "gpusim.tma_desc":
             # Side-effect handled at SubCore._issue; per-lane is no-op

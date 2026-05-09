@@ -33,6 +33,7 @@ class Recorder:
         self.bulk_store_events: list = []
         self.cluster_dispatch_events: list = []
         self.cluster_barrier_events: list = []
+        self.atomic_events: list = []
 
     def warp_state(self, *, cycle: int, warp_id: int, state: str, pc: int) -> None:
         cur = self._cur_state.get(warp_id)
@@ -228,4 +229,16 @@ class Recorder:
         self.cluster_barrier_events.append(ClusterBarrierEvent(
             kind=kind, cycle=cycle, cluster_id=cluster_id, cta_id=cta_id,
             rank=rank, sm_id=sm_id, arrived_count=arrived_count,
+        ))
+
+    def atomic(self, *, cycle: int, sm_id: int, warp_id: int,
+                kind: str, op: str, space: str, line_addr: int,
+                latency: int, n_lanes: int = 1,
+                queue_depth_before: int = 0) -> None:
+        from gpusim.trace.events import AtomicEvent
+        self.atomic_events.append(AtomicEvent(
+            cycle=cycle, sm_id=sm_id, warp_id=warp_id,
+            kind=kind, op=op, space=space, line_addr=line_addr,
+            latency=latency, n_lanes=n_lanes,
+            queue_depth_before=queue_depth_before,
         ))

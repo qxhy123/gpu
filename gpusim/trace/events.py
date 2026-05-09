@@ -219,3 +219,17 @@ class ClusterBarrierEvent:
     rank: int
     sm_id: int
     arrived_count: int = 0
+
+
+@dataclass(frozen=True)
+class AtomicEvent:
+    cycle: int
+    sm_id: int
+    warp_id: int
+    kind: str            # "ATOM" | "RED"
+    op: str              # "add" | "min" | "max" | "exch" | "cas"
+    space: str           # "global" | "shared"
+    line_addr: int
+    latency: int
+    n_lanes: int = 1
+    queue_depth_before: int = 0

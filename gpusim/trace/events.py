@@ -51,6 +51,8 @@ class GmemEvent:
     efficiency: float
     addresses: tuple[int, ...]
     stream_id: int = 0
+    hit: bool = False           # NEW Phase 9 — L2 hit flag
+    in_window: bool = False     # NEW Phase 9 — line was in protected window
 
 
 @dataclass(frozen=True)

@@ -87,9 +87,11 @@ class Recorder:
         return list(self._smem)
 
     def gmem_access(self, *, cycle, warp_id, n_transactions, efficiency, addresses,
-                    stream_id: int = 0) -> None:
+                    stream_id: int = 0,
+                    hit: bool = False, in_window: bool = False) -> None:
         self._gmem.append(GmemEvent(cycle, warp_id, n_transactions, float(efficiency),
-                                    tuple(addresses), stream_id))
+                                    tuple(addresses), stream_id,
+                                    hit=hit, in_window=in_window))
 
     def gmem_accesses(self) -> list[GmemEvent]:
         return list(self._gmem)

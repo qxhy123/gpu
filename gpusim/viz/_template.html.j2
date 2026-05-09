@@ -104,6 +104,16 @@
 {{ dsmem_traffic_html | safe }}
 {% endif %}
 
+{% if atomic_contention_html %}
+<h2>§21 Atomic contention timeline</h2>
+{{ atomic_contention_html | safe }}
+{% endif %}
+
+{% if cooperative_epilogue_html %}
+<h2>§22 Cooperative epilogue overlap</h2>
+{{ cooperative_epilogue_html | safe }}
+{% endif %}
+
 <script>
 Plotly.newPlot("stall_pie", {{ stall_pie_json|safe }}, {});
 Plotly.newPlot("ipc_line", {{ ipc_line_json|safe }}, {});

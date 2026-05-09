@@ -208,6 +208,8 @@ def build_html(rec: Recorder, *, kernel_name: str, grid, block,
         bulk_store_table_html=_render_bulk_store_table(rec),
         cluster_timeline_html=_render_cluster_timeline(rec),
         dsmem_traffic_html=_render_dsmem_traffic(rec),
+        atomic_contention_html=_render_atomic_contention(rec),
+        cooperative_epilogue_html=_render_cooperative_epilogue(rec),
     )
 
 
@@ -238,6 +240,32 @@ def _render_dsmem_traffic(rec):
     instr_df = pd.DataFrame([asdict(e) for e in events])
     rate = dsmem_remote_access_rate(instr_df)
     return f"<p>dsmem remote access rate: <b>{rate*100:.1f}%</b></p>"
+
+
+def _render_atomic_contention(rec):
+    if not rec.atomic_events:
+        return ""
+    from dataclasses import asdict
+    import pandas as pd
+    df = pd.DataFrame([asdict(e) for e in rec.atomic_events])
+    parts = []
+    parts.append("<h3>Atomic events</h3>" + df.head(20).to_html(index=False))
+    if "line_addr" in df.columns:
+        per_line = df.groupby("line_addr").agg(
+            count=("cycle", "size"),
+            avg_latency=("latency", "mean"),
+        ).reset_index().sort_values("count", ascending=False).head(10)
+        parts.append("<h3>Hot lines (top 10)</h3>" + per_line.to_html(index=False))
+    return "\n".join(parts)
+
+
+def _render_cooperative_epilogue(rec):
+    if not rec.bulk_store_events:
+        return ""
+    from dataclasses import asdict
+    import pandas as pd
+    df = pd.DataFrame([asdict(e) for e in rec.bulk_store_events])
+    return "<h3>Cooperative epilogue (bulk store events)</h3>" + df.to_html(index=False)
 
 
 def save_html(rec: Recorder, path: str | Path, **kwargs) -> None:

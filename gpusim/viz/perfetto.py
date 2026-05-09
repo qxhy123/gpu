@@ -160,6 +160,18 @@ def build_perfetto(rec: Recorder) -> dict:
                      "arrived_count": ev.arrived_count},
         })
 
+    # Phase 6 atomic events
+    for ev in rec.atomic_events:
+        events.append({
+            "name": f"{ev.kind.lower()}.{ev.space}.{ev.op}",
+            "cat": "atomic", "ph": "X", "ts": ev.cycle,
+            "dur": max(1, ev.latency),
+            "pid": "Atomic", "tid": ev.kind.lower(),
+            "args": {"line_addr": ev.line_addr, "sm_id": ev.sm_id,
+                     "n_lanes": ev.n_lanes,
+                     "queue_depth_before": ev.queue_depth_before},
+        })
+
     return {"traceEvents": events, "displayTimeUnit": "ns"}
 
 

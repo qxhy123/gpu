@@ -69,7 +69,7 @@ class SM:
         return sum(1 for w in self._active_warps if not w.finished)
 
     def initialize_for_run(self, kernel, gmem, smem, paramspace, grid, block,
-                            occupancy):
+                            occupancy, cluster_size: int = 1):
         """Called once by Device.run before main loop starts."""
         from gpusim.core.exec import InstrExecutor
         from gpusim.core.cache.l1 import L1Cache
@@ -93,6 +93,7 @@ class SM:
         self._wgmma_queues = {}
         self._bulk_store_queues = {}
         self._mbarrier_pools = {}
+        self._cluster_size = cluster_size
         from gpusim.core.sub_core import SubCore
         self._sub_cores = []
         for i in range(self.cfg.sub_cores):
@@ -106,7 +107,8 @@ class SM:
             self._sub_cores.append(sc)
 
     def activate_cta(self, cta_id, ctaid_xyz, regs_per_thread, smem_per_cta,
-                      threads_per_cta, warps_per_cta, cycle):
+                      threads_per_cta, warps_per_cta, cycle,
+                      *, cluster_id: int = -1, cluster_rank: int = -1):
         """Called by Device when scheduler picks this SM for a CTA."""
         from gpusim.core.exec import WarpFnState, InstrExecutor
         from gpusim.core.simt_stack import SIMTStack
@@ -121,6 +123,9 @@ class SM:
             params=self._paramspace, cta_id=cta_id,
             ctaid=ctaid_xyz, nctaid=self._grid, ntid=self._block,
         )
+        cta_executor.cluster_id = cluster_id
+        cta_executor.cluster_rank = cluster_rank
+        cta_executor.cluster_size = getattr(self, "_cluster_size", 1)
         for wid_in_cta in range(warps_per_cta):
             fn = WarpFnState(warp_size=32,
                               tids=tuple(range(wid_in_cta * 32,
@@ -128,7 +133,8 @@ class SM:
             warp_id = cta_id * warps_per_cta + wid_in_cta
             w = Warp(warp_id=warp_id, kernel=self._kernel, fn_state=fn,
                       stack=SIMTStack(warp_size=32, entry_pc=0),
-                      cta_id=cta_id, executor=cta_executor)
+                      cta_id=cta_id, executor=cta_executor,
+                      cluster_id=cluster_id, cluster_rank=cluster_rank)
             self._active_warps.append(w)
             self._sub_cores[warp_id % self.cfg.sub_cores].warps.append(w)
         self._active_cta_ids.add(cta_id)

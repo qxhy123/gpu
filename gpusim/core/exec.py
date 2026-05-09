@@ -217,6 +217,9 @@ class InstrExecutor:
         self.ctaid = ctaid
         self.nctaid = nctaid
         self.ntid = ntid
+        self.cluster_id: int = -1
+        self.cluster_rank: int = -1
+        self.cluster_size: int = 1
 
     # ---- helpers ----
     def _lane_active(self, w: WarpFnState, lane: int, instr: Instr) -> bool:

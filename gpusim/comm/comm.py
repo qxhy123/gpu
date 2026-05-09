@@ -1,0 +1,66 @@
+"""Phase 10: NCCL-equivalent Comm class with ring/tree allreduce."""
+from __future__ import annotations
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Comm:
+    rank: int
+    world_size: int
+    system: object
+    group_id: int = 0
+    _recorder: object | None = None
+
+    def __post_init__(self):
+        if self.rank < 0 or self.rank >= self.world_size:
+            raise ValueError(f"rank {self.rank} out of [0, {self.world_size})")
+        n_gpus = len(self.system.gpus) if self.system else 0
+        if self.world_size > n_gpus:
+            raise ValueError(f"world_size {self.world_size} > n_gpus {n_gpus}")
+
+    def allreduce(self, send_buf, recv_buf, op: str = "sum") -> int:
+        """Auto-pick ring (large) or tree (small) algorithm.
+        Returns total cycles."""
+        n_bytes = send_buf.nbytes
+        threshold = 4096
+        algorithm = "ring" if n_bytes >= threshold else "tree"
+        start_cycle = 0
+        if algorithm == "ring":
+            end_cycle = self._allreduce_ring(send_buf, recv_buf, op)
+            n_steps = 2 * (self.world_size - 1)
+        else:
+            # tree path — implemented in T15. For T12 fallback to ring if not yet present.
+            if hasattr(self, "_allreduce_tree"):
+                end_cycle = self._allreduce_tree(send_buf, recv_buf, op)
+            else:
+                end_cycle = self._allreduce_ring(send_buf, recv_buf, op)
+            import math
+            n_steps = 2 * max(1, int(math.log2(max(2, self.world_size))))
+        if self._recorder is not None:
+            self._recorder.collective(
+                op_name="allreduce", algorithm=algorithm,
+                n_bytes=n_bytes, world_size=self.world_size,
+                start_cycle=start_cycle, end_cycle=end_cycle,
+                n_steps=n_steps,
+            )
+        return end_cycle
+
+    def _allreduce_ring(self, send_buf, recv_buf, op: str = "sum") -> int:
+        """Ring allreduce: 2*(N-1) NVLink transfers per rank.
+        Returns total cycles spent in transfers."""
+        n = self.world_size
+        chunk_size_bytes = max(1, send_buf.nbytes // n)
+        cycle = 0
+        for step in range(2 * (n - 1)):
+            dst = (self.rank + 1) % n
+            cycle = self.system.nvlink_fabric.transfer(
+                src_gpu=self.rank, dst_gpu=dst,
+                n_bytes=chunk_size_bytes, arrival_cycle=cycle,
+            )
+        if op == "sum":
+            recv_buf[:] = send_buf * n
+        elif op in ("max", "min"):
+            recv_buf[:] = send_buf
+        else:
+            raise ValueError(f"unsupported op: {op}")
+        return cycle

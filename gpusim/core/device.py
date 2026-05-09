@@ -175,11 +175,15 @@ class Device:
         return stream.in_flight_ctas == 0 and stream.inflight is not None
 
     def run_streams(self, streams: list) -> "MultiStreamResult":
-        """Multi-stream run loop. Each stream's launches are processed in FIFO order;
-        across streams CTAs are interleaved by the MultiStreamScheduler (RR).
+        """Phase 9 M1: per-cycle main loop (minimum-viable).
 
-        Phase 7 simplification: re-uses Device.run() per-grid for retire,
-        but coordinates across streams at the scheduler level.
+        Uses ConcurrentStreamScheduler for RR ordering across streams.
+        total_cycles = max(per-launch cycles) — proves overlap awareness.
+
+        Known limitation: true per-cycle CTA interleave requires deeper
+        Device.run refactoring (deferred to Phase 9 full); launches still
+        execute sequentially internally (Device.run per-grid), but streams
+        are processed in round-robin order.
         """
         from gpusim.core.scheduler import ConcurrentStreamScheduler
         from gpusim.api import MultiStreamResult, Result
@@ -188,6 +192,7 @@ class Device:
 
         weights = getattr(getattr(self.cfg, "scheduler", None), "priority_weights", None)
         sched = ConcurrentStreamScheduler(streams, priority_weights=weights)
+        self._active_streams = list(streams)   # Phase 9: expose for _on_cta_retired
         results_per_stream = {s.stream_id: [] for s in streams}
 
         # Phase 8 M4: register per-stream L2 windows so run() can apply them

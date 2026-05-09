@@ -477,9 +477,18 @@ class SubCore:
             return
 
         if op.startswith("mbarrier.init."):
-            mbar_addr = w.fn_state.threads[0].get_u64(instr.src[0].name)
+            addr = w.fn_state.threads[0].get_u64(instr.src[0].name)
             count = int(instr.src[1].value)
-            pool = self.mbarrier_pools.get(w.cta_id) if self.mbarrier_pools else None
+            if "shared::cluster" in op:
+                rank = (int(addr) >> 24) & 0xFF
+                mbar_addr = int(addr) & 0xFFFFFF
+                cluster_size = getattr(w.executor, "cluster_size", 1)
+                target_cta = w.cluster_id * cluster_size + rank
+                pool = self.mbarrier_pools.get(target_cta) if self.mbarrier_pools else None
+            else:
+                mbar_addr = int(addr)
+                target_cta = w.cta_id
+                pool = self.mbarrier_pools.get(w.cta_id) if self.mbarrier_pools else None
             if pool is not None:
                 pool.init(smem_addr=mbar_addr, expected=count)
             if self.recorder is not None:
@@ -489,15 +498,24 @@ class SubCore:
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
                 )
                 self.recorder.mbarrier(
-                    kind="INIT", cycle=now, cta_id=w.cta_id,
+                    kind="INIT", cycle=now, cta_id=target_cta,
                     smem_addr=mbar_addr, expected=count,
                 )
             w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return
 
         if op.startswith("mbarrier.arrive."):
-            mbar_addr = w.fn_state.threads[0].get_u64(instr.src[0].name)
-            pool = self.mbarrier_pools.get(w.cta_id) if self.mbarrier_pools else None
+            addr = w.fn_state.threads[0].get_u64(instr.src[0].name)
+            if "shared::cluster" in op:
+                rank = (int(addr) >> 24) & 0xFF
+                mbar_addr = int(addr) & 0xFFFFFF
+                cluster_size = getattr(w.executor, "cluster_size", 1)
+                target_cta = w.cluster_id * cluster_size + rank
+                pool = self.mbarrier_pools.get(target_cta) if self.mbarrier_pools else None
+            else:
+                mbar_addr = int(addr)
+                target_cta = w.cta_id
+                pool = self.mbarrier_pools.get(w.cta_id) if self.mbarrier_pools else None
             if pool is not None:
                 pool.arrive(smem_addr=mbar_addr)
             if self.recorder is not None:
@@ -508,7 +526,7 @@ class SubCore:
                 )
                 bar = pool._barriers.get(mbar_addr) if pool else None
                 self.recorder.mbarrier(
-                    kind="ARRIVE", cycle=now, cta_id=w.cta_id,
+                    kind="ARRIVE", cycle=now, cta_id=target_cta,
                     smem_addr=mbar_addr,
                     arrived=bar.arrived_count if bar is not None else 0,
                 )
@@ -518,9 +536,18 @@ class SubCore:
         if op.startswith("mbarrier.try_wait."):
             # dst[0] = pred result reg, src[0] = mbar addr reg, src[1] = expected_phase imm
             pred_reg = instr.dst[0]
-            mbar_addr = w.fn_state.threads[0].get_u64(instr.src[0].name)
+            addr = w.fn_state.threads[0].get_u64(instr.src[0].name)
             expected_phase = int(instr.src[1].value)
-            pool = self.mbarrier_pools.get(w.cta_id) if self.mbarrier_pools else None
+            if "shared::cluster" in op:
+                rank = (int(addr) >> 24) & 0xFF
+                mbar_addr = int(addr) & 0xFFFFFF
+                cluster_size = getattr(w.executor, "cluster_size", 1)
+                target_cta = w.cluster_id * cluster_size + rank
+                pool = self.mbarrier_pools.get(target_cta) if self.mbarrier_pools else None
+            else:
+                mbar_addr = int(addr)
+                target_cta = w.cta_id
+                pool = self.mbarrier_pools.get(w.cta_id) if self.mbarrier_pools else None
             result = pool.try_wait(smem_addr=mbar_addr, expected_phase=expected_phase) if pool else False
             for t in w.fn_state.threads:
                 t.set_pred(pred_reg.name, bool(result))
@@ -532,7 +559,7 @@ class SubCore:
                 )
                 bar = pool._barriers.get(mbar_addr) if pool else None
                 self.recorder.mbarrier(
-                    kind="TRY_WAIT", cycle=now, cta_id=w.cta_id,
+                    kind="TRY_WAIT", cycle=now, cta_id=target_cta,
                     smem_addr=mbar_addr,
                     phase=bar.phase if bar is not None else 0,
                     pred_result=bool(result),

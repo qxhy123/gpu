@@ -27,3 +27,18 @@ def test_stream_launches_in_order():
         s.launch(ptx_src=f"e{i}", grid=(1,1,1), block=(32,1,1),
                  params={}, kernel_name=f"k{i}")
     assert [g.kernel_name for g in s.pending] == ["k0", "k1", "k2"]
+
+
+def test_result_has_stream_id_default_zero():
+    """Single-kernel run via gpusim.run should produce Result with stream_id=0."""
+    import gpusim
+    src = """
+.entry test() {
+    .reg .u32 %r0;
+    mov.u32 %r0, %tid.x;
+    ret;
+}
+"""
+    res = gpusim.run(ptx_src=src, grid=(1,1,1), block=(32,1,1),
+                      params={}, mode="timing")
+    assert res.stream_id == 0

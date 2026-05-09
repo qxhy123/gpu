@@ -21,6 +21,7 @@ class Result:
     _grid: tuple = field(default=(1,1,1), repr=False)
     _block: tuple = field(default=(1,1,1), repr=False)
     _occupancy: dict | None = field(default=None, repr=False)
+    stream_id: int = 0    # NEW Phase 7 — single-kernel path uses default 0
 
     def summary(self) -> str:
         cyc = self.metrics.get("cycles", "?")

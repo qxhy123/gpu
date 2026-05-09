@@ -612,6 +612,38 @@ def nvlink_bandwidth_utilization(nvlink_df, total_cycles: int) -> dict:
     return out
 
 
+def algo_efficiency_ring_vs_tree(collective_df) -> dict:
+    """Average cycles/byte for ring vs tree."""
+    if collective_df is None or collective_df.empty:
+        return {"ring": 0.0, "tree": 0.0}
+    out = {}
+    for algo in ["ring", "tree"]:
+        sub = collective_df[collective_df["algorithm"] == algo]
+        if sub.empty:
+            out[algo] = 0.0
+            continue
+        total_cycles = (sub["end_cycle"] - sub["start_cycle"]).sum()
+        total_bytes = sub["n_bytes"].sum()
+        out[algo] = float(total_cycles) / max(total_bytes, 1)
+    return out
+
+
+def per_rank_communication_volume(nvlink_df) -> dict:
+    """Total bytes sent per rank."""
+    if nvlink_df is None or nvlink_df.empty:
+        return {}
+    if "rank" in nvlink_df.columns and (nvlink_df["rank"] >= 0).any():
+        valid = nvlink_df[nvlink_df["rank"] >= 0]
+        out = {}
+        for r, group in valid.groupby("rank"):
+            out[int(r)] = int(group["n_bytes"].sum())
+        return out
+    out = {}
+    for sid, group in nvlink_df.groupby("src_gpu"):
+        out[int(sid)] = int(group["n_bytes"].sum())
+    return out
+
+
 def collective_op_breakdown(collective_df) -> dict:
     """Cycles per (op_name, algorithm)."""
     if collective_df is None or collective_df.empty:

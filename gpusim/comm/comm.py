@@ -45,6 +45,81 @@ class Comm:
             )
         return end_cycle
 
+    def _allreduce_tree(self, send_buf, recv_buf, op: str = "sum") -> int:
+        """Tree allreduce: 2*log2(N) transfers."""
+        import math
+        n = self.world_size
+        if n <= 1:
+            recv_buf[:] = send_buf
+            return 0
+        log_n = max(1, int(math.log2(n)))
+        cycle = 0
+        # Reduce phase: log_n steps
+        for step in range(log_n):
+            partner = self.rank ^ (1 << step)
+            if 0 <= partner < n:
+                cycle = self.system.nvlink_fabric.transfer(
+                    src_gpu=self.rank, dst_gpu=partner,
+                    n_bytes=send_buf.nbytes, arrival_cycle=cycle,
+                )
+        # Broadcast phase: log_n more steps
+        for step in range(log_n):
+            partner = self.rank ^ (1 << step)
+            if 0 <= partner < n:
+                cycle = self.system.nvlink_fabric.transfer(
+                    src_gpu=self.rank, dst_gpu=partner,
+                    n_bytes=send_buf.nbytes, arrival_cycle=cycle,
+                )
+        if op == "sum":
+            recv_buf[:] = send_buf * n
+        else:
+            recv_buf[:] = send_buf
+        return cycle
+
+    def broadcast(self, buf, root: int = 0) -> int:
+        """Linear broadcast: (N-1) sends from root."""
+        n = self.world_size
+        if n <= 1: return 0
+        cycle = 0
+        if self.rank == root:
+            for dst in range(n):
+                if dst != root:
+                    cycle = max(cycle, self.system.nvlink_fabric.transfer(
+                        src_gpu=root, dst_gpu=dst,
+                        n_bytes=buf.nbytes, arrival_cycle=0,
+                    ))
+        if self._recorder is not None:
+            self._recorder.collective(
+                op_name="broadcast", algorithm="linear",
+                n_bytes=buf.nbytes, world_size=n,
+                start_cycle=0, end_cycle=cycle, n_steps=n - 1,
+            )
+        return cycle
+
+    def allgather(self, send_buf, recv_buf) -> int:
+        """Linear all-gather: each rank sends to all others. (N-1) sends per rank."""
+        n = self.world_size
+        if n <= 1:
+            recv_buf[:send_buf.size] = send_buf
+            return 0
+        cycle = 0
+        for dst in range(n):
+            if dst != self.rank:
+                cycle = self.system.nvlink_fabric.transfer(
+                    src_gpu=self.rank, dst_gpu=dst,
+                    n_bytes=send_buf.nbytes, arrival_cycle=cycle,
+                )
+        chunk = send_buf.size
+        for r in range(n):
+            recv_buf[r*chunk:(r+1)*chunk] = send_buf
+        if self._recorder is not None:
+            self._recorder.collective(
+                op_name="allgather", algorithm="linear",
+                n_bytes=send_buf.nbytes, world_size=n,
+                start_cycle=0, end_cycle=cycle, n_steps=n - 1,
+            )
+        return cycle
+
     def _allreduce_ring(self, send_buf, recv_buf, op: str = "sum") -> int:
         """Ring allreduce: 2*(N-1) NVLink transfers per rank.
         Returns total cycles spent in transfers."""

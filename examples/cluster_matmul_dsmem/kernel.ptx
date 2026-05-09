@@ -1,0 +1,79 @@
+// examples/cluster_matmul_dsmem/kernel.ptx
+// 4-CTA cluster + dsmem (simplified — no wgmma)
+//
+// Demonstrates mapa.shared::cluster + ld.shared::cluster:
+//   CTA 0 loads A[0..127] (fp32) into its smem.
+//   All 4 CTAs use mapa to read CTA 0's smem and write their slice to OUT.
+//
+// Grid: (4,1,1)  Block: (128,1,1)
+// Params: A[128 fp32], B[1 fp32] (unused), OUT[128 fp32]
+//
+// CTA rank R writes OUT[R*32 .. R*32+31] = A[R*32 .. R*32+31]
+// (i.e., the full 128-element passthrough via dsmem)
+
+.visible .entry test(.param .u64 A, .param .u64 B, .param .u64 OUT)
+{
+    .reg .u64 %rd<8>;
+    .reg .u32 %r<8>;
+    .reg .f32 %f0;
+    .reg .pred %p0;
+    .reg .pred %p1;
+    .reg .pred %p2;
+
+    // ---- load params ----
+    ld.param.u64 %rd0, [A];
+    ld.param.u64 %rd1, [OUT];
+
+    // tid.x (0..127)
+    mov.u32 %r0, %tid.x;
+
+    // cluster rank (0..3)
+    getctarank.u32 %r1;
+
+    // ---- CTA 0 only: load A[0..127] into smem at offset 0..511 ----
+    // Thread t loads A[t] (fp32 = 4 bytes) to smem[t*4]
+    // Only threads 0..127 participate (all 128 threads in CTA 0)
+    setp.ne.u32 %p0, %r1, 0;
+    @%p0 bra CLUSTER_SYNC;
+
+    // addr in A for this thread: A_base + tid*4
+    mul.lo.u32 %r2, %r0, 4;
+    cvt.u64.u32 %rd2, %r2;
+    add.u64 %rd3, %rd0, %rd2;
+    ld.global.f32 %f0, [%rd3];
+    // store to smem at offset tid*4 (smem_base = 0)
+    st.shared.f32 [%rd2], %f0;
+
+CLUSTER_SYNC:
+    bar.sync 0;
+    barrier.cluster.arrive;
+    barrier.cluster.wait;
+
+    // ---- Each CTA: read its 32-element slice from CTA 0's smem via mapa ----
+    // Only threads 0..31 are active (one per output element)
+    setp.ge.u32 %p1, %r0, 32;
+    @%p1 bra DONE;
+
+    // mapa: encode (rank=0, smem_base=0) -> %rd4 = 0
+    // We use an immediate 0 for the rank argument
+    mov.u64 %rd5, 0;
+    mov.u32 %r3, 0;
+    mapa.shared::cluster %rd4, %rd5, %r3;
+
+    // global element index: rank*32 + tid
+    mul.lo.u32 %r4, %r1, 32;
+    add.u32 %r5, %r4, %r0;
+    mul.lo.u32 %r6, %r5, 4;
+    cvt.u64.u32 %rd6, %r6;
+
+    // remote smem address = mapa_result + global_elem*4
+    add.u64 %rd7, %rd4, %rd6;
+    ld.shared::cluster.f32 %f0, [%rd7];
+
+    // store to OUT[global_elem]
+    add.u64 %rd3, %rd1, %rd6;
+    st.global.f32 [%rd3], %f0;
+
+DONE:
+    ret;
+}

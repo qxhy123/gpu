@@ -35,34 +35,55 @@ python examples/vector_add/run.py
 - **Cluster TMA store + cooperative epilogue** — `cp.async.bulk.tensor.2d.global.shared::cluster` cluster-scope async epilogue — `examples/cluster_cooperative_epilogue/` + Chapter 24
 - **CAS-based spinlock** — `atom.cas` for lock-free synchronization patterns — `examples/atom_cas_spinlock/` + Chapter 25
 - **Reduction min/max** — `atom.red.min/max` across SMs, 4 new metrics (atomic_throughput_per_line, serialization_overhead, atom_red_ratio, cooperative_overlap) — `examples/red_min_max/` + Chapter 26
+- **Multi-stream concurrency** — `gpusim.Stream` + `Stream.launch` + `gpusim.synchronize()` multi-stream API, round-robin CTA scheduler across streams, 4 stream metrics — `examples/concurrent_vector_add_2stream/` + Chapter 27
+- **Compute vs memory overlap** — interleave compute-heavy and memory-heavy kernels across streams — `examples/compute_vs_memory_overlap/` + Chapter 28
+- **L2/HBM contention across streams** — model cross-stream L2 bandwidth pressure — `examples/l2_contention_2stream/` + Chapter 29
+- **Stream scheduler fairness** — serial vs concurrent scheduling, Jain fairness index — `examples/stream_priority_serial_vs_concurrent/` + Chapter 30
 
 ## Run a kernel and inspect the report
 ```bash
-# Option 1: Python API — Phase 6 atomic + cluster example
+# Option 1: Python API — Phase 7 multi-stream example
 python -c "
 import numpy as np, gpusim, pathlib
 from gpusim.config.loader import load_default
 
 cfg = load_default()
-cfg.n_sm = 8                    # Phase 4 default
-cfg.scheduler.cta_policy = 'greedy'
-cfg.cluster_size = 4              # Phase 5: 4-CTA clusters
+cfg.n_sm = 8
 n = 1024
 a = np.random.randn(n).astype(np.float32)
 b = np.random.randn(n).astype(np.float32)
-c = np.zeros(n, dtype=np.float32)
+c0 = np.zeros(n, dtype=np.float32)
+c1 = np.zeros(n, dtype=np.float32)
 ptx = pathlib.Path('examples/vector_add/kernel.ptx').read_text()
+
+# Phase 7: multi-stream API
+s0 = gpusim.Stream()
+s1 = gpusim.Stream()
+s0.launch(ptx, grid=(4,1,1), block=(128,1,1),
+          params={'A':a,'B':b,'C':c0,'N':n}, kernel_name='vadd_s0', config=cfg)
+s1.launch(ptx, grid=(4,1,1), block=(128,1,1),
+          params={'A':b,'B':a,'C':c1,'N':n}, kernel_name='vadd_s1', config=cfg)
+
+multi_res = gpusim.synchronize([s0, s1], config=cfg)
+print(multi_res.stream_summary())
+# Note: Phase 7 uses sequential drain in run_streams; cross-grid concurrency
+# benefits are not yet realized in cycle counts (future iteration).
+
+# Phase 7: 4 stream metrics
+from gpusim.analysis.metrics import (
+    stream_concurrency_factor, compute_memory_overlap,
+    l2_bandwidth_per_stream, stream_fairness_jain,
+)
+
+# Phase 6: single-stream API still fully supported (100% backward compatible)
 res = gpusim.run(ptx_src=ptx, grid=(8,1,1), block=(128,1,1),
-                 params={'A':a,'B':b,'C':c,'N':n}, mode='timing', config=cfg)
+                 params={'A':a,'B':b,'C':c0,'N':n}, mode='timing', config=cfg)
 res.html_report('report.html')
 res.perfetto('trace.json')
 print(res.summary())
-# Phase 6: atomic metrics (available when kernel uses atom/red instructions)
 print(res.atomic_summary())
 print(res.atomic_metrics)         # dict: atomic_throughput_per_line, serialization_overhead, atom_red_ratio, cooperative_overlap
-# Phase 5: cluster-level metrics
 print(res.cluster_summary())
-# Phase 4: device-level metrics
 print(res.device_summary())
 print(res.cta_dispatch_events_df)
 # Phase 3: Tensor Core metrics (available when kernel uses mma/wgmma)
@@ -83,8 +104,8 @@ gpusim run examples/vector_add/kernel.ptx \
     --mode timing \
     --output report.html --perfetto trace.json
 ```
-- `report.html` — open in any browser; Phase 3 adds §11 Tensor Core、§12 wgmma、§13 TMA、§14 Barrier sections; Phase 4 adds §15–§18 (CTA dispatch、L2 MSHR、bulk-store overlap、per-SM utilization); Phase 5 adds §19–§20 (cluster dispatch、cluster barrier stats); Phase 6 adds §21 Atomic Operations、§22 Cooperative Epilogue
-- `trace.json` — drag into https://ui.perfetto.dev; Phase 3 adds TC / TMA / Barrier tracks; Phase 4 adds per-SM swimlane; Phase 5 adds cluster swimlane; Phase 6 adds Atomic track (AtomicEvent per-line FIFO serialization)
+- `report.html` — open in any browser; Phase 3 adds §11 Tensor Core、§12 wgmma、§13 TMA、§14 Barrier sections; Phase 4 adds §15–§18 (CTA dispatch、L2 MSHR、bulk-store overlap、per-SM utilization); Phase 5 adds §19–§20 (cluster dispatch、cluster barrier stats); Phase 6 adds §21 Atomic Operations、§22 Cooperative Epilogue; Phase 7 adds §27 Stream Concurrency、§28 Per-Stream Breakdown
+- `trace.json` — drag into https://ui.perfetto.dev; Phase 3 adds TC / TMA / Barrier tracks; Phase 4 adds per-SM swimlane; Phase 5 adds cluster swimlane; Phase 6 adds Atomic track (AtomicEvent per-line FIFO serialization); Phase 7 adds Stream-N swimlanes (one per stream_id)
 
 ## What's modeled
 
@@ -98,7 +119,8 @@ gpusim run examples/vector_add/kernel.ptx \
 | 4 | ✅ done | Multi-SM topology, CTA scheduler, shared L2, TMA store |
 | 5 | ✅ done | Hopper Cluster CGA, dsmem, cluster barrier, cluster TMA |
 | 6 | ✅ done | gmem/smem atomics (5 ops × 3 dtypes), cluster TMA store, cooperative epilogue |
-| 7+ | future | Warp shuffle, ITS, multi-GPU |
+| 7 | ✅ done | Multi-stream API (Stream/launch/synchronize), 4 stream metrics, KernelLaunch trace, §27/§28 HTML, Stream-N Perfetto swimlanes |
+| 8+ | future | Warp shuffle, ITS, cross-grid concurrency, multi-GPU |
 
 ### Phase 1 ✅ — SIMT 基础
 Single SM, cycle-approximate, Hopper-shaped. PTX subset (~30 ops). Shared memory bank conflicts, global memory coalescing, regfile bank conflicts, multi-CTA occupancy.
@@ -118,8 +140,11 @@ Single SM, cycle-approximate, Hopper-shaped. PTX subset (~30 ops). Shared memory
 ### Phase 6 ✅ — Atomics + Cluster TMA Store + Cooperative Epilogue
 **Global memory atomics (gmem atomic):** `atom.global` and `red.global` supporting 5 operations (add / min / max / exch / cas) × 3 data types (u32 / s32 / f32). **L2AtomicQueue:** per-cache-line FIFO queue that serializes concurrent atomic requests from multiple SMs, modeling real hardware cross-SM contention. **Shared memory atomics (smem atomic):** `atom.shared` and `red.shared` with bank-conflict-aware serialization. **Cluster TMA store:** `cp.async.bulk.tensor.2d.global.shared::cluster` cluster-scoped async smem→gmem epilogue. **Cooperative epilogue:** cluster-coordinated writeback pattern. **4 new metrics:** `atomic_throughput_per_line`, `serialization_overhead`, `atom_red_ratio`, `cooperative_overlap`. **1 new trace event:** `AtomicEvent` (op, dtype, address, SM, cycle) recorded to Parquet + surfaced in Perfetto Atomic track. **HTML report adds §21** (Atomic Operations — throughput, contention, per-op breakdown) **and §22** (Cooperative Epilogue — cluster store overlap).
 
+### Phase 7 ✅ — Multi-Stream / Multi-Kernel Concurrency
+**Multi-stream API:** `gpusim.Stream` dataclass + `Stream.launch(ptx, grid, block, params, kernel_name, config)` enqueues kernels; `gpusim.synchronize(streams, config)` drains all streams and returns a `MultiStreamResult`. **100% backward compatible:** `gpusim.run()` is unchanged. **Round-robin CTA scheduler across streams:** `MultiStreamScheduler` dispatches CTAs from multiple streams in round-robin order, propagating `stream_id` through all dispatch events. **1 new trace event:** `KernelLaunch` (stream_id, kernel_name, grid, block, launch_cycle, complete_cycle, n_ctas) recorded to Parquet. **stream_id propagated to 11 existing events:** CTA dispatch, warp events, SubCore events and more now carry `stream_id` for per-stream attribution. **4 new analysis metrics:** `stream_concurrency_factor`, `compute_memory_overlap`, `l2_bandwidth_per_stream`, `stream_fairness_jain` (Jain's fairness index). **`MultiStreamResult` API:** `stream_summary()`, `stream_metrics`, `kernel_launch_events_df`, `per_stream_events_df`, `fairness()`, `overlap_ratio()`. **HTML report adds §27** (Stream Concurrency — concurrency factor, timeline) **and §28** (Per-Stream Breakdown — cycles, CTAs, bandwidth per stream). **Perfetto adds Stream-N swimlanes:** one process track per unique `stream_id` shows kernel durations across streams. **Honest limitation:** Phase 7 uses sequential drain in `run_streams`; cross-grid concurrency is modeled at the CTA scheduling level, but cycle counts do not yet reflect true simultaneous execution of multiple grids. Cross-grid cycle-accurate concurrency is planned for a future iteration.
+
 ## What's NOT modeled
-Warp shuffle, ITS, multi-GPU. See `docs/superpowers/specs/2026-05-07-gpusim-phase1-design.md` section 11.
+Warp shuffle, ITS, cross-grid cycle-accurate concurrency (Phase 7 schedules CTAs concurrently but drains streams sequentially), multi-GPU. See `docs/superpowers/specs/2026-05-07-gpusim-phase1-design.md` section 11.
 
 ## Tutorial
 Read `docs/tutorial/00-intro.md` first.
@@ -153,3 +178,7 @@ Read `docs/tutorial/00-intro.md` first.
 | **24** | **Cluster TMA store + 协作尾写 (cooperative epilogue)** |
 | **25** | **CAS 自旋锁 — lock-free 同步模式** |
 | **26** | **原子 reduction vs 共享内存 reduction — 吞吐比较** |
+| **27** | **Multi-stream 并发基础 — Stream / launch / synchronize API** |
+| **28** | **计算与内存重叠 — compute_memory_overlap 跨流流水线** |
+| **29** | **L2/HBM 跨流竞争 — l2_bandwidth_per_stream 带宽压力** |
+| **30** | **调度器公平性 — stream_fairness_jain Jain 公平指数** |

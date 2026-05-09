@@ -203,6 +203,47 @@ class Result:
                  f"L2 MSHR peak {peak} / "
                  f"BulkStore overlap {overlap:.2f}")
 
+    @property
+    def cluster_dispatch_events_df(self):
+        from gpusim.viz.notebook import cluster_dispatch_events_dataframe
+        return cluster_dispatch_events_dataframe(self._recorder) if self._recorder else None
+
+    @property
+    def cluster_barrier_events_df(self):
+        from gpusim.viz.notebook import cluster_barrier_events_dataframe
+        return cluster_barrier_events_dataframe(self._recorder) if self._recorder else None
+
+    @property
+    def cluster_metrics(self) -> dict:
+        if self._recorder is None:
+            return {}
+        from gpusim.analysis.metrics import (
+            cluster_dispatch_latency, cluster_barrier_wait_distribution,
+            dsmem_remote_access_rate,
+        )
+        cd = self.cluster_dispatch_events_df
+        cb = self.cluster_barrier_events_df
+        try:
+            from gpusim.viz.notebook import instr_issue_dataframe
+            ii = instr_issue_dataframe(self._recorder)
+        except Exception:
+            ii = None
+        return {
+            "cluster_count": len(cd) if cd is not None else 0,
+            "avg_barrier_wait": float(
+                cluster_barrier_wait_distribution(cb).mean()
+            ) if cb is not None and not cb.empty else 0.0,
+            "dsmem_remote_rate": dsmem_remote_access_rate(ii) if ii is not None else 0.0,
+        }
+
+    def cluster_summary(self) -> str:
+        m = self.cluster_metrics
+        if not m or m.get("cluster_count", 0) == 0:
+            return "no clusters dispatched"
+        return (f"clusters dispatched={m['cluster_count']} / "
+                 f"avg barrier wait={m['avg_barrier_wait']:.1f} cyc / "
+                 f"dsmem remote rate={m['dsmem_remote_rate']*100:.1f}%")
+
     def html_report(self, path):
         if self._recorder is None:
             raise ValueError("no recorder; run in timing mode")

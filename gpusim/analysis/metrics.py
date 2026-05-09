@@ -321,6 +321,37 @@ def l2_mshr_pressure(l2_mshr_events_df, total_cycles: int) -> "pd.Series":
     return pd.Series(pressure)
 
 
+def cluster_dispatch_latency(cluster_dispatch_df, cta_launch_df) -> "pd.Series":
+    """Distribution of cluster dispatch cycle delays."""
+    if cluster_dispatch_df is None or cluster_dispatch_df.empty:
+        return pd.Series(dtype=int)
+    return cluster_dispatch_df["cycle"].value_counts().sort_index()
+
+
+def cluster_barrier_wait_distribution(cluster_barrier_df) -> "pd.Series":
+    """For each cluster, compute cycles between first ARRIVE and WAIT_RELEASE."""
+    if cluster_barrier_df is None or cluster_barrier_df.empty:
+        return pd.Series(dtype=int)
+    durations: list[int] = []
+    for cluster_id, grp in cluster_barrier_df.groupby("cluster_id"):
+        arrives = grp[grp["kind"] == "ARRIVE"]["cycle"]
+        releases = grp[grp["kind"] == "WAIT_RELEASE"]["cycle"]
+        if not arrives.empty and not releases.empty:
+            durations.append(int(releases.min() - arrives.min()))
+    return pd.Series(durations).value_counts().sort_index()
+
+
+def dsmem_remote_access_rate(instr_issue_df) -> float:
+    """Fraction of ld/st.shared.* ops that target cluster scope."""
+    if instr_issue_df is None or instr_issue_df.empty:
+        return 0.0
+    shared_ops = instr_issue_df[instr_issue_df["op"].str.contains(r"\.shared")]
+    if shared_ops.empty:
+        return 0.0
+    cluster_ops = shared_ops[shared_ops["op"].str.contains("shared::cluster")]
+    return float(len(cluster_ops)) / len(shared_ops)
+
+
 def bulk_store_async_overlap_ratio(bulk_store_df, warp_state_df) -> float:
     if bulk_store_df is None or bulk_store_df.empty:
         return 0.0

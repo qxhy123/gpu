@@ -108,3 +108,28 @@ def bulk_store_events_dataframe(rec):
     if not rec.bulk_store_events:
         return pd.DataFrame()
     return pd.DataFrame([asdict(e) for e in rec.bulk_store_events])
+
+
+def cluster_dispatch_events_dataframe(rec):
+    import pandas as pd
+    from dataclasses import asdict
+    if not rec.cluster_dispatch_events:
+        return pd.DataFrame()
+    return pd.DataFrame([asdict(e) for e in rec.cluster_dispatch_events])
+
+
+def cluster_barrier_events_dataframe(rec):
+    import pandas as pd
+    from dataclasses import asdict
+    if not rec.cluster_barrier_events:
+        return pd.DataFrame()
+    return pd.DataFrame([asdict(e) for e in rec.cluster_barrier_events])
+
+
+def instr_issue_dataframe(rec):
+    import pandas as pd
+    from dataclasses import asdict
+    events = getattr(rec, "instr_issue_events", None) or getattr(rec, "instr_issues", None)
+    if not events:
+        return pd.DataFrame(columns=["op"])
+    return pd.DataFrame([asdict(e) for e in events])

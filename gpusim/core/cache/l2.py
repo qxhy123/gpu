@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Protocol
 from gpusim.config.schema import CacheConfig
+from gpusim.core.atomic import L2AtomicQueue
 from .line import CacheSet
 from .l2_mshr import L2Mshr
 
@@ -27,6 +28,7 @@ class L2Cache:
             i: CacheSet(ways=cfg.l2_ways) for i in range(self._n_sets)
         }
         self._mshr = L2Mshr(n_slots=cfg.l2_mshr_slots)
+        self._atomic_queue = L2AtomicQueue(n_slots=cfg.atomic_queue_capacity)
 
     def fetch(self, *, line_addr: int, now: int, sm_id: int = -1) -> int:
         set_idx = line_addr & self._set_mask
@@ -148,3 +150,15 @@ class L2Cache:
                     line_addr=line_addr, set_idx=set_idx, way=way,
                     origin_sm=sm_id, hit_sm=sm_id,
                 )
+
+    def atomic_op(self, *, line_addr: int, sm_id: int, op: str,
+                  op_kind: str, now: int) -> int:
+        """Enqueue an atomic on this line; return completion cycle.
+        Phase 6 simplification: assume atomic always L2-hit (line resident).
+        """
+        completion = self._atomic_queue.enqueue(
+            line_addr=line_addr, sm_id=sm_id, op=op, op_kind=op_kind,
+            arrival=now, atomic_op_latency=self.cfg.atomic_op_latency,
+            l2_hit_latency=self.cfg.l2_hit_latency,
+        )
+        return completion

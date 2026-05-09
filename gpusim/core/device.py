@@ -144,12 +144,12 @@ class Device:
         Phase 7 simplification: re-uses Device.run() per-grid for retire,
         but coordinates across streams at the scheduler level.
         """
-        from gpusim.core.scheduler import MultiStreamScheduler
+        from gpusim.core.scheduler import ConcurrentStreamScheduler
         from gpusim.api import MultiStreamResult, Result
         from gpusim.frontend.parser import parse
         from gpusim.trace.recorder import Recorder
 
-        sched = MultiStreamScheduler(streams)
+        sched = ConcurrentStreamScheduler(streams)
         results_per_stream = {s.stream_id: [] for s in streams}
 
         while not all(s.is_idle() for s in streams):

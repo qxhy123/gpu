@@ -118,7 +118,8 @@ class SM:
 
     def activate_cta(self, cta_id, ctaid_xyz, regs_per_thread, smem_per_cta,
                       threads_per_cta, warps_per_cta, cycle,
-                      *, cluster_id: int = -1, cluster_rank: int = -1):
+                      *, cluster_id: int = -1, cluster_rank: int = -1,
+                      stream_id: int = 0):
         """Called by Device when scheduler picks this SM for a CTA."""
         from gpusim.core.exec import WarpFnState, InstrExecutor
         from gpusim.core.simt_stack import SIMTStack
@@ -148,6 +149,10 @@ class SM:
             self._active_warps.append(w)
             self._sub_cores[warp_id % self.cfg.sub_cores].warps.append(w)
         self._active_cta_ids.add(cta_id)
+        # Tag CTA so warp events can read stream_id later (T10 will use this)
+        if not hasattr(self, "_current_cta_stream"):
+            self._current_cta_stream = {}
+        self._current_cta_stream[cta_id] = stream_id
         if self.recorder is not None:
             self.recorder.cta_launch(
                 cycle=cycle, cta_id=cta_id, warps=warps_per_cta,

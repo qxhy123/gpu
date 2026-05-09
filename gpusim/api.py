@@ -300,7 +300,8 @@ class Result:
 def run(*, ptx_src: str | None = None, ptx_path: str | Path | None = None,
         grid: tuple[int,int,int], block: tuple[int,int,int],
         params: dict[str, np.ndarray | int],
-        mode: str = "functional", config: Any = None, seed: int = 0) -> Result:
+        mode: str = "functional", config: Any = None, seed: int = 0,
+        stream_id: int = 0, kernel_name: str = "<unnamed>") -> Result:
     """Run a PTX kernel under the simulator."""
     if ptx_src is None:
         if ptx_path is None:
@@ -330,13 +331,16 @@ def run(*, ptx_src: str | None = None, ptx_path: str | Path | None = None,
         k = parse(ptx_src, "<inline>")
         rec = Recorder()
         dev = Device(cfg, recorder=rec)
-        res = dev.run(kernel=k, grid=grid, block=block, params=params)
-        return Result(
+        res = dev.run(kernel=k, grid=grid, block=block, params=params,
+                      stream_id=stream_id, kernel_name=kernel_name)
+        result = Result(
             outputs=res.outputs, mode="timing",
             metrics={"cycles": res.cycles, "occupancy": res.occupancy},
             _recorder=rec, _kernel_name=k.name, _grid=grid, _block=block,
             _occupancy=res.occupancy,
+            stream_id=stream_id,
         )
+        return result
     raise NotImplementedError(f"mode={mode!r} not implemented yet")
 
 

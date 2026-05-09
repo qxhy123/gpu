@@ -19,7 +19,8 @@ class Device:
         self.recorder = recorder
 
     def run(self, kernel, grid, block, params,
-             regs_per_thread: int = 16, smem_per_cta: int = 0) -> DeviceRunResult:
+             regs_per_thread: int = 16, smem_per_cta: int = 0,
+             stream_id: int = 0, kernel_name: str = "<unnamed>") -> DeviceRunResult:
         import numpy as np
         from gpusim.core.sm import SM
         from gpusim.core.exec import GlobalMemory, SharedMemory, ParamSpace
@@ -97,12 +98,14 @@ class Device:
                         threads_per_cta, warps_per_cta, cycle,
                         cluster_id=cluster_id if cluster_size > 1 else -1,
                         cluster_rank=i if cluster_size > 1 else -1,
+                        stream_id=stream_id,
                     )
                     if self.recorder is not None:
                         self.recorder.cta_dispatch(
                             cycle=cycle, cta_id=cid, sm_id=sm.sm_id,
                             queue_position=cta_pointer + i,
                             active_warps_at_dispatch=sm.active_warp_count(),
+                            stream_id=stream_id,
                         )
                 if cluster_size > 1 and self.recorder is not None:
                     self.recorder.cluster_dispatch(

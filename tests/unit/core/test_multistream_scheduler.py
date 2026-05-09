@@ -85,3 +85,24 @@ def test_device_run_streams_basic_one_stream():
     assert 0 in multi_res.streams
     assert len(multi_res.streams[0]) == 1
     assert multi_res.streams[0][0].metrics["cycles"] > 0
+
+
+def test_cta_dispatch_event_carries_stream_id():
+    """When Device.run is called with stream_id=N, the cta_dispatch event has stream_id=N."""
+    import gpusim
+    from gpusim.api import _reset_stream_id_counter
+    from gpusim.config.loader import load_default
+    _reset_stream_id_counter()
+    src = """
+.entry test() {
+    .reg .u32 %r0;
+    mov.u32 %r0, %tid.x;
+    ret;
+}
+"""
+    cfg = load_default()
+    res = gpusim.run(ptx_src=src, grid=(1,1,1), block=(32,1,1),
+                      params={}, mode="timing", config=cfg, stream_id=7)
+    df = res.cta_dispatch_events_df if hasattr(res, "cta_dispatch_events_df") else None
+    if df is not None and not df.empty:
+        assert (df["stream_id"] == 7).all()

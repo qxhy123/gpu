@@ -143,6 +143,30 @@ class Device:
             occupancy={"active_ctas": occ.active_ctas, "bottleneck": occ.bottleneck},
         )
 
+    def _available_sms(self) -> list:
+        """SMs with capacity for at least one more CTA. Phase 9."""
+        out = []
+        for sm in getattr(self, "sms", []):
+            cap_fn = getattr(sm, "remaining_cta_capacity", None)
+            if cap_fn is None:
+                # Fallback: assume always has capacity
+                out.append(sm)
+                continue
+            if cap_fn() > 0:
+                out.append(sm)
+        return out
+
+    def _dispatch_cta_to_sm(self, sm, stream, cta_idx, cycle: int) -> None:
+        """Dispatch one CTA from stream to sm at the given cycle. Phase 9."""
+        if hasattr(sm, "activate_cta"):
+            sm.activate_cta(cta_idx, stream_id=stream.stream_id)
+        elif hasattr(sm, "dispatch_cta"):
+            sm.dispatch_cta(cta_idx, stream_id=stream.stream_id)
+
+    def _stream_grid_retired(self, stream) -> bool:
+        """True if all CTAs of stream's inflight grid have completed. Phase 9."""
+        return stream.in_flight_ctas == 0 and stream.inflight is not None
+
     def run_streams(self, streams: list) -> "MultiStreamResult":
         """Multi-stream run loop. Each stream's launches are processed in FIFO order;
         across streams CTAs are interleaved by the MultiStreamScheduler (RR).

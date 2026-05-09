@@ -419,3 +419,57 @@ def bulk_store_async_overlap_ratio(bulk_store_df, warp_state_df) -> float:
                         "BULK_STORE_WAIT", "IDLE"):
                     overlapped += ws_end - ws_start
     return overlapped / max(total_inflight, 1)
+
+
+def stream_concurrency_factor(kernel_launch_df, total_cycles: int) -> float:
+    """Average number of streams active per cycle, over the device run.
+    1.0 = serial; up to N for full overlap."""
+    if kernel_launch_df is None or kernel_launch_df.empty or total_cycles <= 0:
+        return 0.0
+    # For each launch, compute its in-flight cycles; sum and divide
+    total_active_cycles = 0
+    for _, row in kernel_launch_df.iterrows():
+        total_active_cycles += max(0, row["complete_cycle"] - row["launch_cycle"])
+    return total_active_cycles / total_cycles
+
+
+def compute_memory_overlap(events_dfs: dict) -> float:
+    """Fraction of compute-event cycles that overlap with memory-event cycles
+    on different streams."""
+    mma_df = events_dfs.get("mma")
+    mem_df = events_dfs.get("memory")
+    if mma_df is None or mma_df.empty or mem_df is None or mem_df.empty:
+        return 0.0
+    overlap = 0
+    total = len(mma_df)
+    for _, mrow in mma_df.iterrows():
+        cycle = mrow["cycle"]
+        cross_stream_mem = mem_df[(mem_df["cycle"] == cycle)
+                                    & (mem_df["stream_id"] != mrow["stream_id"])]
+        if not cross_stream_mem.empty:
+            overlap += 1
+    return overlap / max(total, 1)
+
+
+def l2_bandwidth_per_stream(memory_events_df) -> dict:
+    """Fraction of L2 requests originating from each stream."""
+    if memory_events_df is None or memory_events_df.empty:
+        return {}
+    counts = memory_events_df.groupby("stream_id").size()
+    total = counts.sum()
+    return {int(sid): float(cnt) / total for sid, cnt in counts.items()}
+
+
+def stream_fairness_jain(cta_dispatch_df) -> float:
+    """Jain's fairness index over per-stream CTA dispatch counts:
+    (Σ x_i)² / (n · Σ x_i²)   where x_i = CTAs dispatched for stream i.
+    1.0 = perfectly fair; 1/n = worst case."""
+    if cta_dispatch_df is None or cta_dispatch_df.empty:
+        return 0.0
+    counts = cta_dispatch_df.groupby("stream_id").size().values
+    n = len(counts)
+    if n == 0: return 0.0
+    if n == 1: return 1.0
+    sum_x = float(counts.sum())
+    sum_x_sq = float((counts ** 2).sum())
+    return (sum_x ** 2) / (n * sum_x_sq)

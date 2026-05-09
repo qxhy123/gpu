@@ -432,18 +432,28 @@ class SubCore:
 
         if op.startswith("cp.async.bulk.tensor."):
             from gpusim.core.tma import do_bulk_copy_2d
-            # src[0] = smem_dst reg, src[1] = descriptor reg, src[2] = mbar reg
+            # src[0] = smem_dst reg, src[1] = descriptor reg, src[2] = mbar reg (optional)
             smem_dst_reg = instr.src[0]
             desc_reg = instr.src[1]
-            mbar_reg = instr.src[2]
-            smem_dst = w.fn_state.threads[0].get_u64(smem_dst_reg.name)
+            mbar_reg = instr.src[2] if len(instr.src) > 2 else None
+            smem_dst_ptr = w.fn_state.threads[0].get_u64(smem_dst_reg.name)
             handle = w.fn_state.threads[0].get_u64(desc_reg.name)
-            mbar_addr = w.fn_state.threads[0].get_u64(mbar_reg.name)
             desc = self.tma_descriptor_pool.lookup(handle)
-            # Functional copy
+
+            # Phase 5: decode cluster pointer if shared::cluster form and in a cluster context
+            cluster_size = getattr(w.executor, "cluster_size", 1)
+            if "shared::cluster" in op and w.cluster_id >= 0 and cluster_size > 1:
+                rank = (int(smem_dst_ptr) >> 24) & 0xFF
+                smem_offset = int(smem_dst_ptr) & 0xFFFFFF
+                target_cta = w.cluster_id * cluster_size + rank
+            else:
+                smem_offset = int(smem_dst_ptr)
+                target_cta = w.cta_id
+
+            # Functional copy to target CTA's smem
             tx_bytes = do_bulk_copy_2d(
                 gmem=self.executor.gmem, smem=self.smem,
-                cta_id=w.cta_id, smem_dst=smem_dst, desc=desc,
+                cta_id=target_cta, smem_dst=smem_offset, desc=desc,
             )
             # Compute completion_at via HBM if available; else simple estimate
             n_lines = (tx_bytes + 127) // 128
@@ -455,23 +465,36 @@ class SubCore:
                     served = self.hbm.request(line_addr=line_addr, now=now)
                     latest = max(latest, served)
                 completion_at = latest
-            # Register pending_tx with mbarrier
-            pool = self.mbarrier_pools.get(w.cta_id) if self.mbarrier_pools else None
-            if pool is not None:
-                pool.arrive_tx(smem_addr=mbar_addr, tx_bytes=tx_bytes,
-                               completion_at=completion_at)
+
+            # Mbarrier arrive_tx (cluster-decoded if applicable)
+            if mbar_reg is not None:
+                mbar_ptr = w.fn_state.threads[0].get_u64(mbar_reg.name)
+                if "shared::cluster" in op and w.cluster_id >= 0 and cluster_size > 1:
+                    mbar_rank = (int(mbar_ptr) >> 24) & 0xFF
+                    mbar_offset = int(mbar_ptr) & 0xFFFFFF
+                    target_mbar_cta = w.cluster_id * cluster_size + mbar_rank
+                else:
+                    mbar_offset = int(mbar_ptr)
+                    target_mbar_cta = w.cta_id
+                pool = self.mbarrier_pools.get(target_mbar_cta) if self.mbarrier_pools else None
+                if pool is not None:
+                    pool.arrive_tx(smem_addr=mbar_offset, tx_bytes=tx_bytes,
+                                   completion_at=completion_at)
             if self.recorder is not None:
                 self.recorder.instr_issue(
                     cycle=now, warp_id=w.warp_id, pc=instr.pc, op=op,
                     src_loc=(instr.src_loc.file, instr.src_loc.line),
                     active_mask=w.fn_state.active_mask if w.fn_state else 0,
                 )
+                mbar_addr_for_rec = (
+                    w.fn_state.threads[0].get_u64(mbar_reg.name) if mbar_reg is not None else 0
+                )
                 self.recorder.tma(
                     cycle=now, completion_at=completion_at,
-                    smem_dst=smem_dst, gmem_base=desc.gmem_base,
+                    smem_dst=smem_offset, gmem_base=desc.gmem_base,
                     dim_x=desc.dim_x, dim_y=desc.dim_y,
                     bytes_total=tx_bytes, n_cache_lines=n_lines,
-                    mbarrier_addr=mbar_addr,
+                    mbarrier_addr=mbar_addr_for_rec,
                 )
             w.stack.update_top_pc(w.stack.top().pc + 1); w.stack.maybe_pop()
             return

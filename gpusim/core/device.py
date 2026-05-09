@@ -196,4 +196,5 @@ class Device:
             streams=results_per_stream,
             total_cycles=total_cycles,
             _recorder=getattr(self, "recorder", None),
+            _stream_refs=list(streams),     # NEW
         )

@@ -484,3 +484,17 @@ def stream_fairness_jain(cta_dispatch_df) -> float:
     sum_x = float(counts.sum())
     sum_x_sq = float((counts ** 2).sum())
     return (sum_x ** 2) / (n * sum_x_sq)
+
+
+def priority_dispatch_share(cta_dispatch_df, stream_priority: dict) -> dict:
+    """Fraction of CTA dispatches per priority level (high/normal/low).
+    stream_priority: dict[stream_id -> priority_str]."""
+    if cta_dispatch_df is None or cta_dispatch_df.empty:
+        return {"high": 0.0, "normal": 0.0, "low": 0.0}
+    counts = {"high": 0, "normal": 0, "low": 0}
+    for _, row in cta_dispatch_df.iterrows():
+        sid = int(row["stream_id"])
+        p = stream_priority.get(sid, "normal")
+        counts[p] = counts.get(p, 0) + 1
+    total = max(sum(counts.values()), 1)
+    return {p: c / total for p, c in counts.items()}

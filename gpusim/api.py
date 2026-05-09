@@ -408,6 +408,7 @@ class MultiStreamResult:
     streams: dict                  # int -> list[Result]
     total_cycles: int = 0
     _recorder: object | None = None
+    _stream_refs: list = field(default_factory=list)    # NEW Phase 8 — for priority lookup
 
     @property
     def kernel_launch_events_df(self):
@@ -482,6 +483,17 @@ class MultiStreamResult:
         df = self.kernel_launch_events_df
         if df is None or df.empty: return 0.0
         return cross_stream_concurrency_gain(df, self.total_cycles or 1)
+
+    def priority_dispatch_share(self) -> dict:
+        from gpusim.analysis.metrics import priority_dispatch_share
+        if self._recorder is None: return {"high": 0.0, "normal": 0.0, "low": 0.0}
+        from dataclasses import asdict
+        import pandas as pd
+        rows = [asdict(e) for e in getattr(self._recorder, "cta_dispatch_events", [])]
+        df = pd.DataFrame(rows) if rows else None
+        stream_priority = {s.stream_id: getattr(s, "priority", "normal")
+                             for s in (self._stream_refs or [])}
+        return priority_dispatch_share(df, stream_priority)
 
 
 def synchronize(streams: list = None, *, config=None) -> "MultiStreamResult":

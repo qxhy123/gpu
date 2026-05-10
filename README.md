@@ -158,6 +158,7 @@ gpusim run examples/vector_add/kernel.ptx \
 | 12 | ✅ done | NCCL completion: Comm.reduce_scatter (ring, N-1 transfers), Comm.send/recv (blocking P2P), gpusim.dist module (PyTorch-distributed-compatible API, numpy-first, torch optional), 2 metrics (reduce_scatter_step_count, dist_api_call_breakdown), 3 examples (47–49), tutorials 48–50, backward compatible: Phase 1–11 unchanged |
 | 13 | ✅ done | Graphs completion: child graph nodes (nested DAG + recursive execution), memset nodes (50-cycle overhead), GraphExec.update_kernel_node_params (in-place param swap between replays), 2 metrics (graph_child_depth, graph_update_count), 3 examples (50–52), tutorials 51–53, backward compatible: Phase 1–12 unchanged |
 | 14 | ✅ done | Persistent kernels + dynamic parallelism: WorkQueue (push/pop/stop), PersistentKernel.start() drains queue, device_launch + drain_pending_child_launches, KernelLaunch +parent_kernel_id +is_persistent fields, 3 metrics (persistent_kernel_throughput, dynamic_parallelism_depth, dynamic_parallelism_fanout), 4 examples (53–56), tutorials 54–57, backward compatible: Phase 1–13 unchanged |
+| 15 | Stream Capture API + Conditional Graph Nodes | ✅ |
 
 ### Phase 1 ✅ — SIMT 基础
 Single SM, cycle-approximate, Hopper-shaped. PTX subset (~30 ops). Shared memory bank conflicts, global memory coalescing, regfile bank conflicts, multi-CTA occupancy.
@@ -200,6 +201,28 @@ Single SM, cycle-approximate, Hopper-shaped. PTX subset (~30 ops). Shared memory
 
 ### Phase 14 ✅ — Persistent Kernels + Dynamic Parallelism
 **WorkQueue:** `WorkQueue` (FIFO deque with `push/pop/stop/is_empty/is_stopped`) — host-side queue that feeds work items to a persistent kernel; `push()` raises `RuntimeError` after `stop()` is called. **PersistentKernel:** `PersistentKernel(ptx_src, grid, block, params_template, work_queue, kernel_name).start(config, recorder=None)` — blocking; drains the queue by calling `Stream.launch()` + `synchronize()` per item; records `KernelLaunch` events with `is_persistent=True` when a `Recorder` is provided. **KernelLaunch new fields:** `parent_kernel_id: int = -1` (−1 = top-level) and `is_persistent: bool = False` added to `KernelLaunch` dataclass and `Recorder.kernel_launch()` — fully backward compatible (all Phase 1–13 code unaffected by the default values). **device_launch + drain_pending_child_launches:** `device_launch(parent_kernel_id, ptx_src, grid, block, params, kernel_name)` enqueues a pending child kernel; `drain_pending_child_launches(config, recorder=None)` processes them in FIFO order, recording `KernelLaunch` events with the originating `parent_kernel_id`. `reset_pending_child_launches()` is a test helper to clear module-level state. **3 new metrics:** `persistent_kernel_throughput(df, total_cycles)` (persistent iterations per 1000 cycles), `dynamic_parallelism_depth(df)` (maximum parent→child chain depth), `dynamic_parallelism_fanout(df)` (per-parent child count dict). **gpusim namespace:** `gpusim.WorkQueue`, `gpusim.PersistentKernel`, `gpusim.device_launch`, `gpusim.drain_pending_child_launches` exported. **4 examples (53–56):** `persistent_kernel_server` (5 work items), `persistent_work_queue` (batch push + drain), `dynamic_parallelism_recursive` (parent→child→grandchild chain), `persistent_pipeline` ⭐ (capstone producer-consumer via shared WorkQueue). **4 tutorial chapters (54–57). 100% backward compatible:** Phase 1–13 APIs unchanged.
+
+### Phase 15 ✅ — Stream Capture API + Conditional Graph Nodes
+
+Phase 11 introduced minimal `Stream.begin_capture/end_capture` for single-stream
+capture of `Stream.launch` only. Phase 15 completes the picture:
+**`mode` parameter validation** (only `"global"` accepted), **double-`begin_capture`
+and `end_capture`-without-begin both raise**, **`Graph.is_captured` flag** so
+analytics distinguish captured graphs from hand-built ones, and **`record`/`wait`
+also captured** as event nodes with intra-stream chaining edges. **`CaptureSession`**
+lets multiple streams capture into one shared `Graph` — cross-stream
+`record(ev)` / `wait(ev)` translate automatically into Graph dependency edges.
+**Conditional graph nodes** (`add_conditional_node(cond_fn, true_graph, false_graph)`)
+and **while graph nodes** (`add_while_node(cond_fn, body_graph, max_iterations=1000)`)
+add host-evaluated control flow inside graphs, with a safety cap on while loops.
+**4 new metrics**: `stream_capture_count`, `captured_node_count`,
+`conditional_branch_taken_count`, `avg_loop_iterations`. **4 new trace events**:
+`StreamCaptureBegin`, `StreamCaptureEnd`, `ConditionalBranch`, `LoopIteration`.
+**4 new examples** (stream_capture_basic, stream_capture_multi_stream,
+graph_conditional_branch, graph_while_loop). **4 new tutorial chapters** (58-61).
+**100% backward compatible:** Phase 1-14 APIs unchanged; existing Phase 11
+`graph_capture_from_stream` example still works because `begin_capture()` defaults
+to `mode="global"`.
 
 ## What's NOT modeled
 Warp shuffle, ITS, full per-cycle CTA slicing of individual grid execution (Phase 9 M1 adds cross-grid interleave; intra-grid slicing is future). See `docs/superpowers/specs/2026-05-07-gpusim-phase1-design.md` section 11.

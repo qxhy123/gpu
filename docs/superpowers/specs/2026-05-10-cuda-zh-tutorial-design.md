@@ -70,7 +70,7 @@ docs/cuda-zh/
 ## 2. 硬件视角(微架构细节)
 - Hopper SM90 上具体怎么实现
 - 关键数字(端口数、bank 数、cache size、cycle 延迟)
-- 必要时画 ASCII 框图
+- **涉及架构布局或硬件块关系时,使用 Mermaid `flowchart` / `classDiagram`(优先于 ASCII art)**
 
 ## 3. CUDA 编程接口
 - C++ API(`cuda::`、`__device__`、PTX intrinsic)
@@ -84,6 +84,7 @@ docs/cuda-zh/
 ## 5. 代码示例
 - 1-2 段可读 CUDA C++ 或 PTX,展示典型用法
 - 注释解释每行做什么
+- **涉及多步流程 / 时序 / 状态变化时,用 Mermaid `sequenceDiagram` / `stateDiagram` 配合代码**
 
 ## 6. 实测手段
 - NSight Systems / NSight Compute 用哪个 metric
@@ -103,6 +104,25 @@ docs/cuda-zh/
 ```
 
 **字数指引:** 每节 100-400 字;整章 1500-2500 字。代码块不计入字数。
+
+---
+
+### Mermaid 图表强制要求
+
+**所有涉及"架构布局"、"数据流"、"控制流"、"状态机"、"通信时序"的章节必须用 Mermaid,不允许用 ASCII art 替代。**
+
+| 内容类型 | 推荐 Mermaid 图类型 |
+|---|---|
+| 硬件块关系(SM 内部、缓存层级、SM↔L2↔HBM) | `flowchart TD` 或 `flowchart LR` |
+| 类 / API 层级(Driver vs Runtime) | `classDiagram` |
+| 时序(kernel launch 流程、NCCL collective 步骤、TMA 完成通知) | `sequenceDiagram` |
+| 状态机(warp state、mbarrier phase、CTA lifecycle) | `stateDiagram-v2` |
+| 拓扑(NVLink topology、Cluster CGA、ring/tree) | `graph LR` 节点带 label |
+| 数据通路(算子流水线) | `flowchart LR` 横向 |
+
+每章至少 **1 个** Mermaid 图(00 索引章 ≥ 2 个);上限不限。
+
+Mermaid 渲染:GitHub / VS Code / 主流 markdown 浏览器原生支持,无需额外工具。
 
 ---
 
@@ -263,7 +283,7 @@ docs/cuda-zh/
 - **换行:** LF
 - **行长:** 中文不强制;代码块不超过 100 字符
 - **标题层级:** 一级 `#` 仅章名(`# NN · 标题`);二级 `##` 用于八节
-- **图片:** ASCII art 优先,不引用任何外部图片(除非链 docs.nvidia.com)
+- **图片:** Mermaid 优先(架构 / 流程 / 状态 / 时序 / 拓扑都用 Mermaid);ASCII art 只用于无法 Mermaid 表达的场景(如内存 bank 物理布局矩阵);不引用外部 PNG/JPG。
 - **超链接:** 仅链 docs.nvidia.com / developer.nvidia.com / github.com/NVIDIA
 
 ---
@@ -349,3 +369,4 @@ docs/cuda-zh/22-ptx-to-sass.md
 - [ ] 全部章节零 gpusim 引用(grep `gpusim` 应无命中)
 - [ ] 5 个里程碑 tag 全到位
 - [ ] 00-index.md 提供两条阅读路径并链接到所有 22 章
+- [ ] 每章至少 1 个 Mermaid 图,00 索引至少 2 个(grep ` ```mermaid` 累计应 ≥ 24 命中)

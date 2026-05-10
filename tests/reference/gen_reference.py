@@ -118,6 +118,10 @@ SUPPORTED_KERNELS = [
     "graph_capture_from_stream",
     "graph_replay_perf",
     "graph_iterative_train_step",
+    # Phase 12 additions
+    "reduce_scatter_fsdp",
+    "send_recv_pipeline_parallel",
+    "pytorch_dist_simple",
 ]
 
 

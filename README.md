@@ -51,6 +51,10 @@ python examples/vector_add/run.py
 - **Ring allreduce** — bandwidth-optimal ring algorithm for large messages, `nvlink_bandwidth_utilization` + `per_rank_communication_volume` metrics — `examples/ring_allreduce/` + Chapter 41
 - **Tree allreduce** — latency-optimal tree algorithm for small messages, `algo_efficiency_ring_vs_tree` metric, auto-pick at 4096-byte threshold — `examples/tree_allreduce/` + Chapter 42
 - **DDP training step** — end-to-end allreduce + broadcast pipeline mimicking DistributedDataParallel gradient sync, `collective_op_breakdown` metric — `examples/ddp_training_step/` + Chapter 43
+- **CUDA Graphs (explicit build)** — `gpusim.Graph` builder API + 3 node types (KernelNode, MemcpyNode, EventNode); `GraphExec` topological sort + replay — `examples/graph_explicit_build/` + Chapter 44
+- **CUDA Graphs (stream capture)** — `Stream.begin_capture()` / `Stream.end_capture()` implicit dependency tracking from launch order; replay via `GraphExec` — `examples/graph_capture_from_stream/` + Chapter 45
+- **Graph replay performance** — `graph_replay_amortization` metric: replay overhead vs. first-launch cost; `graph_dag_depth` (critical-path length) + `graph_node_type_breakdown` per-type node count — `examples/graph_replay_perf/` + Chapter 46
+- **Graph iterative train step** — end-to-end graph capture of a multi-kernel train iteration and iterative replay showing amortization across steps — `examples/graph_iterative_train_step/` + Chapter 47
 
 ## Run a kernel and inspect the report
 ```bash
@@ -122,8 +126,8 @@ gpusim run examples/vector_add/kernel.ptx \
     --mode timing \
     --output report.html --perfetto trace.json
 ```
-- `report.html` — open in any browser; Phase 3 adds §11 Tensor Core、§12 wgmma、§13 TMA、§14 Barrier sections; Phase 4 adds §15–§18 (CTA dispatch、L2 MSHR、bulk-store overlap、per-SM utilization); Phase 5 adds §19–§20 (cluster dispatch、cluster barrier stats); Phase 6 adds §21 Atomic Operations、§22 Cooperative Epilogue; Phase 7 adds §27 Stream Concurrency、§28 Per-Stream Breakdown; Phase 8 adds §29 Cross-Stream Concurrency Gain、§30 Priority Dispatch、§31 Event/L2-Window Stats; Phase 9 adds §32 Actual Overlap Cycles + L2 Eviction Protection; Phase 10 adds §33 NVLink Bandwidth + §34 Collective Operations
-- `trace.json` — drag into https://ui.perfetto.dev; Phase 3 adds TC / TMA / Barrier tracks; Phase 4 adds per-SM swimlane; Phase 5 adds cluster swimlane; Phase 6 adds Atomic track (AtomicEvent per-line FIFO serialization); Phase 7 adds Stream-N swimlanes (one per stream_id); Phase 8 adds StreamEvent annotations (record/wait markers per stream with cycle timestamps); Phase 9 adds Perfetto async arrows for record→wait event flow; Phase 10 adds NVLink swimlane (per GPU→GPU link) + Collective swimlane (per rank)
+- `report.html` — open in any browser; Phase 3 adds §11 Tensor Core、§12 wgmma、§13 TMA、§14 Barrier sections; Phase 4 adds §15–§18 (CTA dispatch、L2 MSHR、bulk-store overlap、per-SM utilization); Phase 5 adds §19–§20 (cluster dispatch、cluster barrier stats); Phase 6 adds §21 Atomic Operations、§22 Cooperative Epilogue; Phase 7 adds §27 Stream Concurrency、§28 Per-Stream Breakdown; Phase 8 adds §29 Cross-Stream Concurrency Gain、§30 Priority Dispatch、§31 Event/L2-Window Stats; Phase 9 adds §32 Actual Overlap Cycles + L2 Eviction Protection; Phase 10 adds §33 NVLink Bandwidth + §34 Collective Operations; Phase 11 adds §35 CUDA Graph Stats (replay amortization, DAG depth, node-type breakdown)
+- `trace.json` — drag into https://ui.perfetto.dev; Phase 3 adds TC / TMA / Barrier tracks; Phase 4 adds per-SM swimlane; Phase 5 adds cluster swimlane; Phase 6 adds Atomic track (AtomicEvent per-line FIFO serialization); Phase 7 adds Stream-N swimlanes (one per stream_id); Phase 8 adds StreamEvent annotations (record/wait markers per stream with cycle timestamps); Phase 9 adds Perfetto async arrows for record→wait event flow; Phase 10 adds NVLink swimlane (per GPU→GPU link) + Collective swimlane (per rank); Phase 11 adds Graph swimlane (one track per GraphExec showing node execution + GraphLaunch trace event)
 
 ## What's modeled
 
@@ -141,7 +145,7 @@ gpusim run examples/vector_add/kernel.ptx \
 | 8 | ✅ done | True concurrent scheduler (ConcurrentStreamScheduler), stream priority (4:2:1 weights), CUDA Events, L2 set-window API, 6 metrics, §29/§30/§31 HTML, StreamEvent Perfetto |
 | 9 | ✅ done | Per-cycle Device.run_streams, L2 eviction window protection, Stream.wait_all, Event.elapsed_time, 2 metrics, §32 HTML, Perfetto async arrows, 3 examples (36–38), tutorials 37–39 |
 | 10 | ✅ done | Multi-GPU (cfg.n_gpus), MultiGpuSystem, NVLink fabric, Comm (NCCL-equivalent): ring + tree allreduce, broadcast, allgather; 4 metrics, 2 trace events, §33/§34 HTML, Perfetto NVLink + Collective swimlanes, 4 examples (39–42), tutorials 40–43 |
-| 11+ | future | Warp shuffle, ITS, full per-cycle CTA slicing (grid-level interleave) |
+| 11 | ✅ done | CUDA Graphs: Graph builder API + 3 node types (KernelNode/MemcpyNode/EventNode), GraphExec topological sort + replay, Stream.begin_capture/end_capture, 3 metrics, 1 trace event (GraphLaunch), §35 HTML, Perfetto Graph swimlane, 4 examples (43–46), tutorials 44–47 |
 
 ### Phase 1 ✅ — SIMT 基础
 Single SM, cycle-approximate, Hopper-shaped. PTX subset (~30 ops). Shared memory bank conflicts, global memory coalescing, regfile bank conflicts, multi-CTA occupancy.
@@ -173,8 +177,11 @@ Single SM, cycle-approximate, Hopper-shaped. PTX subset (~30 ops). Shared memory
 ### Phase 10 ✅ — Multi-GPU + NVLink + NCCL-equivalent Collectives
 **cfg.n_gpus configurable (default 1 = backward compatible):** `DeviceConfig.n_gpus` sets the number of simulated GPUs; existing single-GPU code requires no changes. **MultiGpuSystem:** wraps N `GPU` instances sharing a single `NvlinkFabric`, providing `.run_all()` for multi-GPU kernel dispatch. **NVLink fabric:** point-to-point links modeled with per-link bandwidth + latency; `NvlinkFabric.build_all_to_all(n_gpus)` constructs the default fully-connected topology. **Comm class (NCCL-equivalent):** `Comm(gpus, fabric)` carries `rank` + `world_size`; exposes `allreduce(buf, op)`, `broadcast(buf, root)`, `allgather(sendbuf) → recvbuf`. **Allreduce algorithms:** ring (bandwidth-optimal, large messages) and tree (latency-optimal, small messages) with auto-pick at the 4096-byte threshold; selectable via `algo='ring'|'tree'|'auto'`. **4 new metrics:** `nvlink_bandwidth_utilization`, `collective_op_breakdown`, `algo_efficiency_ring_vs_tree`, `per_rank_communication_volume`. **2 new trace events:** `NvlinkTransfer` (src_gpu, dst_gpu, nbytes, start_cycle, end_cycle) + `CollectiveOp` (op, algo, world_size, nbytes, start_cycle, end_cycle). **HTML report adds §33** (NVLink Bandwidth — per-link utilization + transfer timeline) **and §34** (Collective Operations — op breakdown, algo efficiency, per-rank volume). **Perfetto adds NVLink swimlane** (one track per GPU→GPU link showing NvlinkTransfer slices) **and Collective swimlane** (one track per rank showing CollectiveOp slices). **4 new examples (39–42):** `multi_gpu_setup`, `ring_allreduce`, `tree_allreduce`, `ddp_training_step`. **4 new tutorial chapters (40–43). 100% backward compatible:** Phase 1–9 APIs unchanged.
 
+### Phase 11 ✅ — CUDA Graphs
+**gpusim.Graph builder API:** `Graph` class with `add_kernel(ptx, grid, block, params, kernel_name)`, `add_memcpy(src, dst, n_bytes)`, `add_event()` node factories; `graph.add_dependency(a, b)` wires DAG edges; `graph.instantiate(config)` returns a `GraphExec`. **3 node types:** `KernelNode`, `MemcpyNode`, `EventNode`. **GraphExec topological sort + replay:** Kahn's algorithm validates the DAG (raises `CycleError` on cycles) and produces an execution order; `GraphExec.launch()` walks the order to replay all nodes in one call. **Stream capture mode:** `Stream.begin_capture()` intercepts subsequent `Stream.launch()` calls to record kernel nodes instead of executing; `Stream.end_capture()` returns a `Graph` with implicit edges from launch order; `graph.instantiate(config).launch()` replays the captured sequence. **3 new metrics:** `graph_replay_amortization` (ratio of first-launch cost to nth-replay cost), `graph_dag_depth` (critical-path node count), `graph_node_type_breakdown` (dict of node-type → count). **1 new trace event:** `GraphLaunch` (graph_id, n_nodes, exec_cycle, node_order) recorded to Parquet and emitted as Perfetto instant events. **HTML §35** — CUDA Graph Stats: replay amortization chart, DAG depth, node-type breakdown table. **Perfetto Graph swimlane:** one process track per `GraphExec` showing per-node execution slices. **4 examples (43–46):** `graph_explicit_build`, `graph_capture_from_stream`, `graph_replay_perf`, `graph_iterative_train_step`. **4 tutorial chapters (44–47). 100% backward compatible:** Phase 1–10 APIs unchanged.
+
 ## What's NOT modeled
-Warp shuffle, ITS, full per-cycle CTA slicing of individual grid execution (Phase 9 M1 adds cross-grid interleave; intra-grid slicing is Phase 11+). See `docs/superpowers/specs/2026-05-07-gpusim-phase1-design.md` section 11.
+Warp shuffle, ITS, full per-cycle CTA slicing of individual grid execution (Phase 9 M1 adds cross-grid interleave; intra-grid slicing is future). See `docs/superpowers/specs/2026-05-07-gpusim-phase1-design.md` section 11.
 
 ## Tutorial
 Read `docs/tutorial/00-intro.md` first.
@@ -225,3 +232,7 @@ Read `docs/tutorial/00-intro.md` first.
 | **41** | **Ring Allreduce — 带宽最优环形算法 + nvlink_bandwidth_utilization + per_rank_communication_volume** |
 | **42** | **Tree Allreduce — 延迟最优树形算法 + algo_efficiency_ring_vs_tree + 4096 字节自动选择阈值** |
 | **43** | **DDP 训练步骤 — allreduce + broadcast 梯度同步流水线 + collective_op_breakdown** |
+| **44** | **CUDA Graphs 入门 — Graph builder API + 3 节点类型 (KernelNode / MemcpyNode / EventNode) + GraphExec 拓扑排序** |
+| **45** | **Stream 捕获模式 — begin_capture / end_capture 隐式依赖追踪 + 捕获图的实例化与回放** |
+| **46** | **Graph 回放性能 — graph_replay_amortization + graph_dag_depth + graph_node_type_breakdown 三指标分析** |
+| **47** | **图化训练步骤 — 多核 Graph 捕获迭代训练循环 + 摊销成本收益分析** |

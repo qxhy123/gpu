@@ -1,6 +1,9 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from gpusim.graph.node import GraphNode, KernelNodeArgs, MemcpyNodeArgs, EventNodeArgs
+from gpusim.graph.node import (
+    GraphNode, KernelNodeArgs, MemcpyNodeArgs, EventNodeArgs,
+    ConditionalNodeArgs, WhileNodeArgs,
+)
 
 
 @dataclass
@@ -46,6 +49,24 @@ class Graph:
         args = ChildGraphNodeArgs(graph=graph)
         self.nodes.append(GraphNode(node_id=nid, type="child_graph",
                                        child_graph_args=args))
+        return nid
+
+    def add_conditional_node(self, *, cond_fn, true_graph: "Graph",
+                                false_graph: "Graph") -> int:
+        nid = self._next_id; self._next_id += 1
+        args = ConditionalNodeArgs(cond_fn=cond_fn, true_graph=true_graph,
+                                      false_graph=false_graph)
+        self.nodes.append(GraphNode(node_id=nid, type="conditional",
+                                       conditional_args=args))
+        return nid
+
+    def add_while_node(self, *, cond_fn, body_graph: "Graph",
+                          max_iterations: int = 1000) -> int:
+        nid = self._next_id; self._next_id += 1
+        args = WhileNodeArgs(cond_fn=cond_fn, body_graph=body_graph,
+                                max_iterations=max_iterations)
+        self.nodes.append(GraphNode(node_id=nid, type="while",
+                                       while_args=args))
         return nid
 
     def add_dependency(self, parent_id: int, child_id: int) -> None:

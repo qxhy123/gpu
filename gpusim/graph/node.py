@@ -37,11 +37,27 @@ class ChildGraphNodeArgs:
 
 
 @dataclass
+class ConditionalNodeArgs:
+    cond_fn: object       # Callable[[], bool], evaluated at exec time
+    true_graph: object    # Graph
+    false_graph: object   # Graph (may be empty)
+
+
+@dataclass
+class WhileNodeArgs:
+    cond_fn: object       # Callable[[], bool], re-evaluated each iteration
+    body_graph: object    # Graph
+    max_iterations: int = 1000
+
+
+@dataclass
 class GraphNode:
     node_id: int
-    type: str             # "kernel" | "memcpy" | "event" | "memset" | "child_graph"
+    type: str             # "kernel" | "memcpy" | "event" | "memset" | "child_graph" | "conditional" | "while"
     kernel_args: KernelNodeArgs | None = None
     memcpy_args: MemcpyNodeArgs | None = None
     event_args: EventNodeArgs | None = None
     memset_args: MemsetNodeArgs | None = None    # NEW Phase 13
     child_graph_args: ChildGraphNodeArgs | None = None    # NEW Phase 13
+    conditional_args: ConditionalNodeArgs | None = None    # NEW Phase 15
+    while_args: WhileNodeArgs | None = None                # NEW Phase 15

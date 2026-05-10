@@ -1,0 +1,20 @@
+.visible .entry train_step(.param .u64 ACT, .param .u64 GRAD)
+{
+    .reg .u64 %rd<6>;
+    .reg .u32 %r<6>;
+
+    ld.param.u64 %rd0, [ACT];
+    ld.param.u64 %rd1, [GRAD];
+
+    mov.u32 %r0, %tid.x;
+    shl.b32 %r1, %r0, 2;
+    cvt.u64.u32 %rd2, %r1;
+    add.u64 %rd3, %rd0, %rd2;
+    add.u64 %rd4, %rd1, %rd2;
+
+    mov.u32 %r2, 1;
+    st.global.u32 [%rd3], %r2;
+    st.global.u32 [%rd4], %r2;
+
+    ret;
+}

@@ -144,6 +144,19 @@ class Comm:
             )
         return cycle
 
+    def send(self, buf, dst_rank: int) -> int:
+        """Blocking send. Returns completion cycle."""
+        cycle = self.system.nvlink_fabric.transfer(
+            src_gpu=self.rank, dst_gpu=dst_rank,
+            n_bytes=buf.nbytes, arrival_cycle=0,
+            recorder=self._recorder, rank=self.rank, op_name="send",
+        )
+        return cycle
+
+    def recv(self, buf, src_rank: int) -> int:
+        """Blocking recv. In simulator, paired send already did the work."""
+        return 0
+
     def _allreduce_ring(self, send_buf, recv_buf, op: str = "sum") -> int:
         """Ring allreduce: 2*(N-1) NVLink transfers per rank.
         Returns total cycles spent in transfers."""

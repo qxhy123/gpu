@@ -60,6 +60,10 @@ class GraphExec:
             elif node.type == "event":
                 # Event nodes: ordering enforced via topo order; no cycle cost
                 pass
+            elif node.type == "memset":
+                a = node.memset_args
+                a.buf[:] = a.value
+                total_cycles += 50
         if self._recorder is not None:
             self._recorder.graph_launch(
                 graph_id=self._graph_id,

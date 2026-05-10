@@ -25,9 +25,17 @@ class EventNodeArgs:
 
 
 @dataclass
+class MemsetNodeArgs:
+    buf: object
+    value: int
+    n_bytes: int
+
+
+@dataclass
 class GraphNode:
     node_id: int
-    type: str             # "kernel" | "memcpy" | "event"
+    type: str             # "kernel" | "memcpy" | "event" | "memset"
     kernel_args: KernelNodeArgs | None = None
     memcpy_args: MemcpyNodeArgs | None = None
     event_args: EventNodeArgs | None = None
+    memset_args: MemsetNodeArgs | None = None    # NEW Phase 13

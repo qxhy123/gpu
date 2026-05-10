@@ -536,6 +536,14 @@ class Stream:
     def is_idle(self) -> bool:
         return self.inflight is None and not self.pending
 
+    def malloc_async(self, pool, n_bytes: int, dtype=None):
+        """Allocate from pool on this stream (Phase 16)."""
+        return pool.malloc_async(self, n_bytes, dtype=dtype)
+
+    def free_async(self, pool, allocation) -> None:
+        """Return allocation to pool on this stream (Phase 16)."""
+        pool.free_async(self, allocation)
+
 
 @dataclass
 class MultiStreamResult:

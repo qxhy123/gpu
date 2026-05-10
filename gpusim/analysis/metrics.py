@@ -693,3 +693,26 @@ def graph_node_type_breakdown(graph) -> dict:
     for n in graph.nodes:
         out[n.type] = out.get(n.type, 0) + 1
     return out
+
+
+def reduce_scatter_step_count(collective_df) -> dict:
+    """Per-call step count for reduce_scatter ops. Returns {n_steps: count}."""
+    if collective_df is None or collective_df.empty:
+        return {}
+    sub = collective_df[collective_df["op_name"] == "reduce_scatter"]
+    if sub.empty:
+        return {}
+    out = {}
+    for n in sub["n_steps"]:
+        out[int(n)] = out.get(int(n), 0) + 1
+    return out
+
+
+def dist_api_call_breakdown(collective_df) -> dict:
+    """Frequency of each collective op_name."""
+    if collective_df is None or collective_df.empty:
+        return {}
+    out = {}
+    for name in collective_df["op_name"]:
+        out[str(name)] = out.get(str(name), 0) + 1
+    return out

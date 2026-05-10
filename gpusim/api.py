@@ -440,14 +440,28 @@ class Stream:
         if self.priority not in ("high", "normal", "low"):
             raise ValueError(f"priority must be high/normal/low, got {self.priority!r}")
 
-    def begin_capture(self) -> None:
-        """Start recording subsequent .launch into a fresh Graph. Phase 11."""
+    def begin_capture(self, mode: str = "global") -> None:
+        """Start recording subsequent .launch into a fresh Graph.
+        Phase 11 capture, extended in Phase 15 with mode validation."""
+        if mode != "global":
+            raise ValueError(
+                f"only 'global' capture mode supported in Phase 15, got {mode!r}"
+            )
+        if self._captured_graph is not None:
+            raise RuntimeError(
+                f"stream {self.stream_id} is already capturing"
+            )
         from gpusim.graph.graph import Graph
         self._captured_graph = Graph()
+        self._captured_graph.is_captured = True
         self._capture_last_node = None
 
     def end_capture(self) -> "Graph":
-        """Stop capture; return the recorded Graph. Phase 11."""
+        """Stop capture; return the recorded Graph. Phase 11 + Phase 15 errors."""
+        if self._captured_graph is None:
+            raise RuntimeError(
+                f"stream {self.stream_id} is not capturing"
+            )
         g = self._captured_graph
         self._captured_graph = None
         self._capture_last_node = None

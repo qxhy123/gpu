@@ -343,6 +343,39 @@ class LoopIteration:
     cycle: int
 
 
+@dataclass(frozen=True)
+class PoolAllocate:
+    pool_id: int
+    stream_id: int
+    n_bytes: int
+    ptr_id: int
+    reused: bool
+    cycle: int
+
+
+@dataclass(frozen=True)
+class PoolFree:
+    pool_id: int
+    stream_id: int
+    ptr_id: int
+    n_bytes: int
+    cycle: int
+
+
+@dataclass(frozen=True)
+class PoolGrow:
+    pool_id: int
+    n_bytes_added: int
+    cycle: int
+
+
+@dataclass(frozen=True)
+class PoolTrim:
+    pool_id: int
+    n_bytes_released: int
+    cycle: int
+
+
 # Canonical short aliases for Phase 7 stream_id API
 InstrIssue = InstrIssueEvent
 MemoryAccess = GmemEvent

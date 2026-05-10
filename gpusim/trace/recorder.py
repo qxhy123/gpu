@@ -43,6 +43,10 @@ class Recorder:
         self.stream_capture_end_events: list = []
         self.conditional_branch_events: list = []
         self.loop_iteration_events: list = []
+        self.pool_allocate_events: list = []
+        self.pool_free_events: list = []
+        self.pool_grow_events: list = []
+        self.pool_trim_events: list = []
 
     def warp_state(self, *, cycle: int, warp_id: int, state: str, pc: int) -> None:
         cur = self._cur_state.get(warp_id)
@@ -346,3 +350,31 @@ class Recorder:
         self.loop_iteration_events.append(
             LoopIteration(node_id=node_id, iteration=iteration, cycle=cycle)
         )
+
+    def pool_allocate(self, *, pool_id: int, stream_id: int, n_bytes: int,
+                       ptr_id: int, reused: bool, cycle: int) -> None:
+        from gpusim.trace.events import PoolAllocate
+        self.pool_allocate_events.append(PoolAllocate(
+            pool_id=pool_id, stream_id=stream_id, n_bytes=n_bytes,
+            ptr_id=ptr_id, reused=reused, cycle=cycle,
+        ))
+
+    def pool_free(self, *, pool_id: int, stream_id: int, ptr_id: int,
+                    n_bytes: int, cycle: int) -> None:
+        from gpusim.trace.events import PoolFree
+        self.pool_free_events.append(PoolFree(
+            pool_id=pool_id, stream_id=stream_id, ptr_id=ptr_id,
+            n_bytes=n_bytes, cycle=cycle,
+        ))
+
+    def pool_grow(self, *, pool_id: int, n_bytes_added: int, cycle: int) -> None:
+        from gpusim.trace.events import PoolGrow
+        self.pool_grow_events.append(PoolGrow(
+            pool_id=pool_id, n_bytes_added=n_bytes_added, cycle=cycle,
+        ))
+
+    def pool_trim(self, *, pool_id: int, n_bytes_released: int, cycle: int) -> None:
+        from gpusim.trace.events import PoolTrim
+        self.pool_trim_events.append(PoolTrim(
+            pool_id=pool_id, n_bytes_released=n_bytes_released, cycle=cycle,
+        ))

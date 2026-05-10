@@ -85,3 +85,26 @@ def test_graph_exec_chain_3_kernels():
 
     np.testing.assert_array_equal(OUT, A + B)
     assert cycles > 0
+
+
+def test_graph_exec_records_launch_event():
+    from gpusim.graph.graph import Graph
+    from gpusim.config.loader import load_default
+    from gpusim.trace.recorder import Recorder
+    cfg = load_default()
+    src = """
+.entry test() {
+    .reg .u32 %r0;
+    mov.u32 %r0, %tid.x;
+    ret;
+}
+"""
+    g = Graph()
+    g.add_kernel_node(ptx_src=src, grid=(1,1,1), block=(32,1,1),
+                        params={}, kernel_name="k")
+    rec = Recorder()
+    exec = g.instantiate(cfg)
+    exec._recorder = rec
+    exec._graph_id = 0
+    exec.launch()
+    assert len(rec.graph_launch_events) == 1

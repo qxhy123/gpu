@@ -30,6 +30,9 @@ class GraphExec:
     graph: object          # Graph
     topo_order: list       # list of node_ids in valid execution order
     config: object
+    _recorder: object | None = None
+    _graph_id: int = 0
+    _launch_count: int = 0
 
     @classmethod
     def from_graph(cls, graph, config) -> "GraphExec":
@@ -57,4 +60,14 @@ class GraphExec:
             elif node.type == "event":
                 # Event nodes: ordering enforced via topo order; no cycle cost
                 pass
+        if self._recorder is not None:
+            self._recorder.graph_launch(
+                graph_id=self._graph_id,
+                n_nodes=len(self.graph.nodes),
+                n_edges=len(self.graph.edges),
+                launch_index=self._launch_count,
+                start_cycle=0,
+                end_cycle=total_cycles,
+            )
+        self._launch_count += 1
         return total_cycles

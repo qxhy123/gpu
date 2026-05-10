@@ -38,6 +38,7 @@ class Recorder:
         self.stream_event_events: list = []
         self.nvlink_transfer_events: list = []
         self.collective_events: list = []
+        self.graph_launch_events: list = []
 
     def warp_state(self, *, cycle: int, warp_id: int, state: str, pc: int) -> None:
         cur = self._cur_state.get(warp_id)
@@ -290,6 +291,14 @@ class Recorder:
             op_name=op_name, algorithm=algorithm, n_bytes=n_bytes,
             world_size=world_size, start_cycle=start_cycle, end_cycle=end_cycle,
             n_steps=n_steps,
+        ))
+
+    def graph_launch(self, *, graph_id: int, n_nodes: int, n_edges: int,
+                       launch_index: int, start_cycle: int, end_cycle: int) -> None:
+        from gpusim.trace.events import GraphLaunch
+        self.graph_launch_events.append(GraphLaunch(
+            graph_id=graph_id, n_nodes=n_nodes, n_edges=n_edges,
+            launch_index=launch_index, start_cycle=start_cycle, end_cycle=end_cycle,
         ))
 
     def kernel_launch(self, *, stream_id: int, kernel_name: str,

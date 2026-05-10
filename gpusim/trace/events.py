@@ -304,6 +304,16 @@ class CollectiveOp:
     n_steps: int
 
 
+@dataclass(frozen=True)
+class GraphLaunch:
+    graph_id: int
+    n_nodes: int
+    n_edges: int
+    launch_index: int
+    start_cycle: int
+    end_cycle: int
+
+
 # Canonical short aliases for Phase 7 stream_id API
 InstrIssue = InstrIssueEvent
 MemoryAccess = GmemEvent

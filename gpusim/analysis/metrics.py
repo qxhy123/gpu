@@ -653,3 +653,43 @@ def collective_op_breakdown(collective_df) -> dict:
         cycles = (group["end_cycle"] - group["start_cycle"]).sum()
         out[(str(name), str(algo))] = int(cycles)
     return out
+
+
+def graph_replay_amortization(graph_launch_df, single_kernel_baseline_cycles: int) -> dict:
+    """Cycles per replay vs N independent kernel launches."""
+    if graph_launch_df is None or graph_launch_df.empty:
+        return {"avg_cycles_per_replay": 0.0, "amortization_factor": 0.0}
+    durations = (graph_launch_df["end_cycle"] - graph_launch_df["start_cycle"]).values
+    avg = float(durations.mean())
+    if single_kernel_baseline_cycles <= 0 or avg <= 0:
+        return {"avg_cycles_per_replay": avg, "amortization_factor": 0.0}
+    return {
+        "avg_cycles_per_replay": avg,
+        "amortization_factor": float(single_kernel_baseline_cycles) / avg,
+    }
+
+
+def graph_dag_depth(graph) -> int:
+    """Length of longest dependency chain."""
+    if not graph.nodes:
+        return 0
+    children = {}
+    for parent, child in graph.edges:
+        children.setdefault(parent, []).append(child)
+    cache = {}
+    def longest_from(nid):
+        if nid in cache: return cache[nid]
+        if nid not in children or not children[nid]:
+            cache[nid] = 1
+        else:
+            cache[nid] = 1 + max(longest_from(c) for c in children[nid])
+        return cache[nid]
+    return max(longest_from(n.node_id) for n in graph.nodes)
+
+
+def graph_node_type_breakdown(graph) -> dict:
+    """Count of nodes by type."""
+    out = {"kernel": 0, "memcpy": 0, "event": 0}
+    for n in graph.nodes:
+        out[n.type] = out.get(n.type, 0) + 1
+    return out

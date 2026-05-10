@@ -304,11 +304,15 @@ class Recorder:
     def kernel_launch(self, *, stream_id: int, kernel_name: str,
                        grid: tuple, block: tuple,
                        launch_cycle: int, complete_cycle: int,
-                       n_ctas: int) -> None:
+                       n_ctas: int,
+                       parent_kernel_id: int = -1,    # NEW Phase 14
+                       is_persistent: bool = False) -> None:    # NEW Phase 14
         from gpusim.trace.events import KernelLaunch
         self.kernel_launch_events.append(KernelLaunch(
             stream_id=stream_id, kernel_name=kernel_name,
             grid=grid, block=block,
             launch_cycle=launch_cycle, complete_cycle=complete_cycle,
             n_ctas=n_ctas,
+            parent_kernel_id=parent_kernel_id,
+            is_persistent=is_persistent,
         ))

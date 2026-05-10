@@ -272,6 +272,8 @@ class KernelLaunch:
     launch_cycle: int
     complete_cycle: int
     n_ctas: int
+    parent_kernel_id: int = -1     # NEW Phase 14
+    is_persistent: bool = False     # NEW Phase 14
 
 
 @dataclass(frozen=True)

@@ -33,6 +33,7 @@ class GraphExec:
     _recorder: object | None = None
     _graph_id: int = 0
     _launch_count: int = 0
+    _update_count: int = 0    # NEW Phase 13
 
     @classmethod
     def from_graph(cls, graph, config) -> "GraphExec":
@@ -79,3 +80,16 @@ class GraphExec:
             )
         self._launch_count += 1
         return total_cycles
+
+    def update_kernel_node_params(self, node_id: int, **kwargs) -> None:
+        """Modify a kernel node's params in place. Phase 13."""
+        node = next((n for n in self.graph.nodes if n.node_id == node_id), None)
+        if node is None:
+            raise ValueError(f"node_id {node_id} not found")
+        if node.type != "kernel":
+            raise ValueError(f"node_id {node_id} is type {node.type!r}, not kernel")
+        for k, v in kwargs.items():
+            if k not in ("ptx_src", "grid", "block", "params", "kernel_name"):
+                raise ValueError(f"unknown update field: {k}")
+            setattr(node.kernel_args, k, v)
+        self._update_count += 1

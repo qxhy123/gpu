@@ -1,9 +1,9 @@
-"""Smoke-test: each Phase 1-12 example runs without crashing on Phase 12 Device path."""
+"""Smoke-test: each Phase 1-13 example runs without crashing on Phase 13 Device path."""
 import pytest
 import pathlib, subprocess, sys
 
 
-PHASE_1_12_EXAMPLES = [
+PHASE_1_13_EXAMPLES = [
     # Phase 1
     "vector_add",
     "reduction_smem",
@@ -65,14 +65,18 @@ PHASE_1_12_EXAMPLES = [
     "reduce_scatter_fsdp",
     "send_recv_pipeline_parallel",
     "pytorch_dist_simple",
+    # Phase 13
+    "graph_memset_zero",
+    "graph_with_child",
+    "graph_update_replay",
 ]
 
 # Examples that take > 2 min on the simulator; skipped in the fast suite.
 SLOW_EXAMPLES = {"l1_thrash_demo"}
 
 
-@pytest.mark.parametrize("ex", [e for e in PHASE_1_12_EXAMPLES if e not in SLOW_EXAMPLES])
-def test_phase_1_12_example_smoke(ex):
+@pytest.mark.parametrize("ex", [e for e in PHASE_1_13_EXAMPLES if e not in SLOW_EXAMPLES])
+def test_phase_1_13_example_smoke(ex):
     base = pathlib.Path(__file__).resolve().parents[2] / "examples" / ex
     if not (base / "run.py").exists():
         pytest.skip(f"no run.py for {ex}")
@@ -88,7 +92,7 @@ def test_phase_1_12_example_smoke(ex):
 
 @pytest.mark.slow
 @pytest.mark.parametrize("ex", sorted(SLOW_EXAMPLES))
-def test_phase_1_12_example_smoke_slow(ex):
+def test_phase_1_13_example_smoke_slow(ex):
     """Same smoke test for examples that exceed the 120 s fast-suite timeout."""
     base = pathlib.Path(__file__).resolve().parents[2] / "examples" / ex
     if not (base / "run.py").exists():

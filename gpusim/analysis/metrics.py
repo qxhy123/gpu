@@ -815,3 +815,46 @@ def avg_loop_iterations(recorder) -> float:
     for ev in events:
         per_node[ev.node_id] = per_node.get(ev.node_id, 0) + 1
     return sum(per_node.values()) / len(per_node)
+
+
+def pool_high_water_mark(recorder, pool_id: int) -> int:
+    """Phase 16: peak in_flight bytes for a pool over the trace.
+    Computed by walking PoolAllocate/PoolFree events in cycle order."""
+    events = []
+    for ev in getattr(recorder, "pool_allocate_events", []):
+        if ev.pool_id == pool_id:
+            events.append((ev.cycle, +ev.n_bytes))
+    for ev in getattr(recorder, "pool_free_events", []):
+        if ev.pool_id == pool_id:
+            events.append((ev.cycle, -ev.n_bytes))
+    events.sort()
+    in_flight = 0
+    high = 0
+    for _, delta in events:
+        in_flight += delta
+        if in_flight > high:
+            high = in_flight
+    return high
+
+
+def pool_reuse_rate(recorder, pool_id: int) -> float:
+    """Phase 16: fraction of allocations that reused a previously-freed block."""
+    events = [ev for ev in getattr(recorder, "pool_allocate_events", [])
+              if ev.pool_id == pool_id]
+    if not events:
+        return 0.0
+    reused = sum(1 for ev in events if ev.reused)
+    return reused / len(events)
+
+
+def pool_alloc_count(recorder, pool_id: int) -> int:
+    """Phase 16: total malloc_async calls on a pool."""
+    return sum(1 for ev in getattr(recorder, "pool_allocate_events", [])
+               if ev.pool_id == pool_id)
+
+
+def pool_release_total_bytes(recorder, pool_id: int) -> int:
+    """Phase 16: total bytes released by trim_to calls on a pool."""
+    return sum(ev.n_bytes_released
+               for ev in getattr(recorder, "pool_trim_events", [])
+               if ev.pool_id == pool_id)

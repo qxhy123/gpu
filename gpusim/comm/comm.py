@@ -120,6 +120,30 @@ class Comm:
             )
         return cycle
 
+    def reduce_scatter(self, send_buf, recv_buf, op: str = "sum") -> int:
+        """Reduce_scatter: each rank gets one chunk of reduced result. Ring algorithm."""
+        n = self.world_size
+        chunk_size_bytes = max(1, send_buf.nbytes // n)
+        cycle = 0
+        for step in range(n - 1):
+            dst = (self.rank + 1) % n
+            cycle = self.system.nvlink_fabric.transfer(
+                src_gpu=self.rank, dst_gpu=dst,
+                n_bytes=chunk_size_bytes, arrival_cycle=cycle,
+            )
+        chunk_n = max(1, send_buf.size // n)
+        if op == "sum":
+            recv_buf[:chunk_n] = send_buf[self.rank * chunk_n:(self.rank + 1) * chunk_n] * n
+        else:
+            recv_buf[:chunk_n] = send_buf[self.rank * chunk_n:(self.rank + 1) * chunk_n]
+        if self._recorder is not None:
+            self._recorder.collective(
+                op_name="reduce_scatter", algorithm="ring",
+                n_bytes=send_buf.nbytes, world_size=n,
+                start_cycle=0, end_cycle=cycle, n_steps=n - 1,
+            )
+        return cycle
+
     def _allreduce_ring(self, send_buf, recv_buf, op: str = "sum") -> int:
         """Ring allreduce: 2*(N-1) NVLink transfers per rank.
         Returns total cycles spent in transfers."""

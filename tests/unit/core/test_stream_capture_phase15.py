@@ -89,3 +89,61 @@ def test_stream_end_capture_with_recorder_emits_end_event_with_node_count():
     s.end_capture()
     assert len(rec.stream_capture_end_events) == 1
     assert rec.stream_capture_end_events[0].captured_node_count == 0
+
+
+def test_capture_records_event_node_for_record():
+    from gpusim.api import Stream, Event
+    s = Stream()
+    ev = Event()
+    s.begin_capture()
+    s.record(ev)
+    g = s.end_capture()
+    assert len(g.nodes) == 1
+    assert g.nodes[0].type == "event"
+    assert g.nodes[0].event_args.op == "record"
+    assert g.nodes[0].event_args.event is ev
+
+
+def test_capture_records_event_node_for_wait():
+    from gpusim.api import Stream, Event
+    s = Stream()
+    ev = Event()
+    s.begin_capture()
+    s.wait(ev)
+    g = s.end_capture()
+    assert len(g.nodes) == 1
+    assert g.nodes[0].type == "event"
+    assert g.nodes[0].event_args.op == "wait"
+
+
+def test_capture_chains_kernel_to_record_to_kernel_with_edges():
+    """Within a single stream, ordering is captured as edges."""
+    from gpusim.api import Stream, Event
+    from gpusim.config.loader import load_default
+    cfg = load_default()
+    ptx = """
+.visible .entry k(.param .u64 OUT) {
+    .reg .u64 %rd<3>; .reg .u32 %r<3>;
+    ld.param.u64 %rd0, [OUT];
+    mov.u32 %r0, %tid.x; shl.b32 %r1, %r0, 2; cvt.u64.u32 %rd1, %r1;
+    add.u64 %rd2, %rd0, %rd1;
+    mov.u32 %r2, 1; st.global.u32 [%rd2], %r2;
+    ret;
+}
+"""
+    import numpy as np
+    OUT = np.zeros(32, dtype=np.uint32)
+    s = Stream()
+    ev = Event()
+    s.begin_capture()
+    s.launch(ptx_src=ptx, grid=(1,1,1), block=(32,1,1),
+              params={"OUT": OUT}, kernel_name="k1", config=cfg)
+    s.record(ev)
+    s.launch(ptx_src=ptx, grid=(1,1,1), block=(32,1,1),
+              params={"OUT": OUT}, kernel_name="k2", config=cfg)
+    g = s.end_capture()
+    assert len(g.nodes) == 3                    # k1, record, k2
+    assert len(g.edges) == 2                    # k1→record, record→k2
+    nids = [n.node_id for n in g.nodes]
+    assert (nids[0], nids[1]) in g.edges
+    assert (nids[1], nids[2]) in g.edges

@@ -496,7 +496,13 @@ class Stream:
         ))
 
     def record(self, ev: Event) -> None:
-        """Append a record-marker to pending; signals ev when prior pending+inflight retire."""
+        """Append a record-marker. In capture mode (Phase 15), records as event node."""
+        if self._captured_graph is not None:
+            nid = self._captured_graph.add_event_node(event=ev, op="record")
+            if self._capture_last_node is not None:
+                self._captured_graph.add_dependency(self._capture_last_node, nid)
+            self._capture_last_node = nid
+            return
         self.pending.append(_RecordMarker(event=ev))
 
     def set_l2_window(self, *, start_set: int, n_sets: int) -> None:
@@ -504,7 +510,13 @@ class Stream:
         self.l2_window = (start_set, n_sets)
 
     def wait(self, ev: Event) -> None:
-        """Block this stream's future launches until ev is signaled."""
+        """Block this stream's future launches. In capture mode (Phase 15), records as event node."""
+        if self._captured_graph is not None:
+            nid = self._captured_graph.add_event_node(event=ev, op="wait")
+            if self._capture_last_node is not None:
+                self._captured_graph.add_dependency(self._capture_last_node, nid)
+            self._capture_last_node = nid
+            return
         self.event_waits.append(ev)
 
     def wait_all(self, events: list) -> None:

@@ -716,3 +716,21 @@ def dist_api_call_breakdown(collective_df) -> dict:
     for name in collective_df["op_name"]:
         out[str(name)] = out.get(str(name), 0) + 1
     return out
+
+
+def graph_child_depth(graph) -> int:
+    """Maximum nesting depth of child graphs.
+    Returns 0 if no child graph nodes; 1 if single level; etc."""
+    if not graph.nodes:
+        return 0
+    max_depth = 0
+    for n in graph.nodes:
+        if n.type == "child_graph" and n.child_graph_args is not None:
+            child_depth = 1 + graph_child_depth(n.child_graph_args.graph)
+            max_depth = max(max_depth, child_depth)
+    return max_depth
+
+
+def graph_update_count(graph_exec) -> int:
+    """Number of update_kernel_node_params calls performed on this GraphExec."""
+    return getattr(graph_exec, "_update_count", 0)

@@ -126,6 +126,11 @@ SUPPORTED_KERNELS = [
     "graph_memset_zero",
     "graph_with_child",
     "graph_update_replay",
+    # Phase 14 additions
+    "persistent_kernel_server",
+    "dynamic_parallelism_recursive",
+    "persistent_work_queue",
+    "persistent_pipeline",
 ]
 
 

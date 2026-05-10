@@ -1,0 +1,24 @@
+.visible .entry sgd_update(.param .u64 WEIGHTS, .param .u64 GRADS)
+{
+    .reg .u64 %rd<6>;
+    .reg .u32 %r<4>;
+    .reg .f32 %f<4>;
+
+    ld.param.u64 %rd0, [WEIGHTS];
+    ld.param.u64 %rd1, [GRADS];
+
+    mov.u32 %r0, %tid.x;
+    shl.b32 %r1, %r0, 2;
+    cvt.u64.u32 %rd2, %r1;
+
+    add.u64 %rd3, %rd0, %rd2;
+    ld.global.f32 %f0, [%rd3];
+    add.u64 %rd4, %rd1, %rd2;
+    ld.global.f32 %f1, [%rd4];
+
+    sub.f32 %f2, %f0, %f1;
+
+    st.global.f32 [%rd3], %f2;
+
+    ret;
+}

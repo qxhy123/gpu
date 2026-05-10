@@ -8,6 +8,7 @@ class Graph:
     nodes: list = field(default_factory=list)
     edges: list = field(default_factory=list)   # [(parent_id, child_id), ...]
     _next_id: int = 0
+    is_captured: bool = False    # NEW Phase 15 — True iff produced by Stream.end_capture
 
     def add_kernel_node(self, *, ptx_src: str, grid: tuple, block: tuple,
                         params: dict, kernel_name: str = "<unnamed>") -> int:

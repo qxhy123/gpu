@@ -316,6 +316,33 @@ class GraphLaunch:
     end_cycle: int
 
 
+@dataclass(frozen=True)
+class StreamCaptureBegin:
+    stream_id: int
+    cycle: int
+
+
+@dataclass(frozen=True)
+class StreamCaptureEnd:
+    stream_id: int
+    cycle: int
+    captured_node_count: int
+
+
+@dataclass(frozen=True)
+class ConditionalBranch:
+    node_id: int
+    taken: bool
+    cycle: int
+
+
+@dataclass(frozen=True)
+class LoopIteration:
+    node_id: int
+    iteration: int
+    cycle: int
+
+
 # Canonical short aliases for Phase 7 stream_id API
 InstrIssue = InstrIssueEvent
 MemoryAccess = GmemEvent

@@ -435,6 +435,7 @@ class Stream:
     l2_window: tuple | None = None     # NEW Phase 8 — (start_set, n_sets)
     _captured_graph: object | None = None     # NEW Phase 11
     _capture_last_node: int | None = None     # NEW Phase 11
+    _recorder: object | None = None    # NEW Phase 15 — for capture trace events
 
     def __post_init__(self):
         if self.priority not in ("high", "normal", "low"):
@@ -455,6 +456,8 @@ class Stream:
         self._captured_graph = Graph()
         self._captured_graph.is_captured = True
         self._capture_last_node = None
+        if self._recorder is not None:
+            self._recorder.stream_capture_begin(stream_id=self.stream_id, cycle=0)
 
     def end_capture(self) -> "Graph":
         """Stop capture; return the recorded Graph. Phase 11 + Phase 15 errors."""
@@ -463,8 +466,14 @@ class Stream:
                 f"stream {self.stream_id} is not capturing"
             )
         g = self._captured_graph
+        captured_count = len(g.nodes)
         self._captured_graph = None
         self._capture_last_node = None
+        if self._recorder is not None:
+            self._recorder.stream_capture_end(
+                stream_id=self.stream_id, cycle=0,
+                captured_node_count=captured_count,
+            )
         return g
 
     def launch(self, ptx_src: str, grid: tuple, block: tuple,

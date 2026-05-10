@@ -39,6 +39,10 @@ class Recorder:
         self.nvlink_transfer_events: list = []
         self.collective_events: list = []
         self.graph_launch_events: list = []
+        self.stream_capture_begin_events: list = []
+        self.stream_capture_end_events: list = []
+        self.conditional_branch_events: list = []
+        self.loop_iteration_events: list = []
 
     def warp_state(self, *, cycle: int, warp_id: int, state: str, pc: int) -> None:
         cur = self._cur_state.get(warp_id)
@@ -316,3 +320,29 @@ class Recorder:
             parent_kernel_id=parent_kernel_id,
             is_persistent=is_persistent,
         ))
+
+    def stream_capture_begin(self, *, stream_id: int, cycle: int) -> None:
+        from gpusim.trace.events import StreamCaptureBegin
+        self.stream_capture_begin_events.append(
+            StreamCaptureBegin(stream_id=stream_id, cycle=cycle)
+        )
+
+    def stream_capture_end(self, *, stream_id: int, cycle: int,
+                              captured_node_count: int) -> None:
+        from gpusim.trace.events import StreamCaptureEnd
+        self.stream_capture_end_events.append(
+            StreamCaptureEnd(stream_id=stream_id, cycle=cycle,
+                              captured_node_count=captured_node_count)
+        )
+
+    def conditional_branch(self, *, node_id: int, taken: bool, cycle: int) -> None:
+        from gpusim.trace.events import ConditionalBranch
+        self.conditional_branch_events.append(
+            ConditionalBranch(node_id=node_id, taken=taken, cycle=cycle)
+        )
+
+    def loop_iteration(self, *, node_id: int, iteration: int, cycle: int) -> None:
+        from gpusim.trace.events import LoopIteration
+        self.loop_iteration_events.append(
+            LoopIteration(node_id=node_id, iteration=iteration, cycle=cycle)
+        )

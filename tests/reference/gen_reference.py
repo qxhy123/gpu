@@ -113,6 +113,11 @@ SUPPORTED_KERNELS = [
     "ring_allreduce",
     "tree_allreduce",
     "ddp_training_step",
+    # Phase 11 additions
+    "graph_explicit_build",
+    "graph_capture_from_stream",
+    "graph_replay_perf",
+    "graph_iterative_train_step",
 ]
 
 

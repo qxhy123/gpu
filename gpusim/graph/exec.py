@@ -64,6 +64,10 @@ class GraphExec:
                 a = node.memset_args
                 a.buf[:] = a.value
                 total_cycles += 50
+            elif node.type == "child_graph":
+                a = node.child_graph_args
+                child_exec = a.graph.instantiate(self.config)
+                total_cycles += child_exec.launch()
         if self._recorder is not None:
             self._recorder.graph_launch(
                 graph_id=self._graph_id,

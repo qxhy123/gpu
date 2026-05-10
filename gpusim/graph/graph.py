@@ -39,6 +39,14 @@ class Graph:
         self.nodes.append(GraphNode(node_id=nid, type="memset", memset_args=args))
         return nid
 
+    def add_child_graph_node(self, *, graph: "Graph") -> int:
+        from gpusim.graph.node import ChildGraphNodeArgs
+        nid = self._next_id; self._next_id += 1
+        args = ChildGraphNodeArgs(graph=graph)
+        self.nodes.append(GraphNode(node_id=nid, type="child_graph",
+                                       child_graph_args=args))
+        return nid
+
     def add_dependency(self, parent_id: int, child_id: int) -> None:
         if parent_id == child_id:
             raise ValueError("self-dependency not allowed")

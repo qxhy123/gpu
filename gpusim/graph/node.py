@@ -32,10 +32,16 @@ class MemsetNodeArgs:
 
 
 @dataclass
+class ChildGraphNodeArgs:
+    graph: object
+
+
+@dataclass
 class GraphNode:
     node_id: int
-    type: str             # "kernel" | "memcpy" | "event" | "memset"
+    type: str             # "kernel" | "memcpy" | "event" | "memset" | "child_graph"
     kernel_args: KernelNodeArgs | None = None
     memcpy_args: MemcpyNodeArgs | None = None
     event_args: EventNodeArgs | None = None
     memset_args: MemsetNodeArgs | None = None    # NEW Phase 13
+    child_graph_args: ChildGraphNodeArgs | None = None    # NEW Phase 13

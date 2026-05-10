@@ -734,3 +734,48 @@ def graph_child_depth(graph) -> int:
 def graph_update_count(graph_exec) -> int:
     """Number of update_kernel_node_params calls performed on this GraphExec."""
     return getattr(graph_exec, "_update_count", 0)
+
+
+def persistent_kernel_throughput(kernel_launch_df, total_cycles: int) -> float:
+    """Persistent kernel iterations per 1000 cycles."""
+    if kernel_launch_df is None or kernel_launch_df.empty or total_cycles <= 0:
+        return 0.0
+    if "is_persistent" not in kernel_launch_df.columns:
+        return 0.0
+    persistent = kernel_launch_df[kernel_launch_df["is_persistent"] == True]
+    return float(len(persistent)) / max(total_cycles, 1) * 1000
+
+
+def dynamic_parallelism_depth(kernel_launch_df) -> int:
+    """Maximum parent->child chain depth."""
+    if kernel_launch_df is None or kernel_launch_df.empty:
+        return 0
+    if "parent_kernel_id" not in kernel_launch_df.columns:
+        return 0
+    parents = {int(row["stream_id"]): int(row["parent_kernel_id"])
+                for _, row in kernel_launch_df.iterrows()}
+    max_depth = 0
+    for sid in parents:
+        depth = 0
+        cur = sid
+        while cur in parents and parents[cur] >= 0:
+            depth += 1
+            cur = parents[cur]
+            if depth > 1000:  # cycle guard
+                break
+        max_depth = max(max_depth, depth + 1)
+    return max_depth
+
+
+def dynamic_parallelism_fanout(kernel_launch_df) -> dict:
+    """Per-parent child count."""
+    if kernel_launch_df is None or kernel_launch_df.empty:
+        return {}
+    if "parent_kernel_id" not in kernel_launch_df.columns:
+        return {}
+    out = {}
+    for _, row in kernel_launch_df.iterrows():
+        pid = int(row["parent_kernel_id"])
+        if pid >= 0:
+            out[pid] = out.get(pid, 0) + 1
+    return out

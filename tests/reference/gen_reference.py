@@ -122,6 +122,10 @@ SUPPORTED_KERNELS = [
     "reduce_scatter_fsdp",
     "send_recv_pipeline_parallel",
     "pytorch_dist_simple",
+    # Phase 13 additions
+    "graph_memset_zero",
+    "graph_with_child",
+    "graph_update_replay",
 ]
 
 

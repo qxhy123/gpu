@@ -1,2 +1,3 @@
 from gpusim.persistent.queue import WorkQueue
-__all__ = ["WorkQueue"]
+from gpusim.persistent.kernel import PersistentKernel
+__all__ = ["WorkQueue", "PersistentKernel"]

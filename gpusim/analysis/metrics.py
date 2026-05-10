@@ -819,18 +819,23 @@ def avg_loop_iterations(recorder) -> float:
 
 def pool_high_water_mark(recorder, pool_id: int) -> int:
     """Phase 16: peak in_flight bytes for a pool over the trace.
-    Computed by walking PoolAllocate/PoolFree events in cycle order."""
-    events = []
-    for ev in getattr(recorder, "pool_allocate_events", []):
-        if ev.pool_id == pool_id:
-            events.append((ev.cycle, +ev.n_bytes))
-    for ev in getattr(recorder, "pool_free_events", []):
-        if ev.pool_id == pool_id:
-            events.append((ev.cycle, -ev.n_bytes))
-    events.sort()
+    Walks PoolAllocate/PoolFree events in insertion order (interleaving by event type
+    via a monotonic counter to preserve true causality)."""
+    # Tag each event with its insertion index across both lists.
+    tagged = []
+    alloc_events = [ev for ev in getattr(recorder, "pool_allocate_events", []) if ev.pool_id == pool_id]
+    free_events = [ev for ev in getattr(recorder, "pool_free_events", []) if ev.pool_id == pool_id]
+    # Insertion-order interleave by cycle, falling back to alloc-first stable order.
+    # Use (cycle, type_priority, original_index) — alloc (priority 0) before free (priority 1)
+    # at the same cycle so peak is computed before retire.
+    for i, ev in enumerate(alloc_events):
+        tagged.append((ev.cycle, 0, i, +ev.n_bytes))
+    for i, ev in enumerate(free_events):
+        tagged.append((ev.cycle, 1, i, -ev.n_bytes))
+    tagged.sort()
     in_flight = 0
     high = 0
-    for _, delta in events:
+    for _, _, _, delta in tagged:
         in_flight += delta
         if in_flight > high:
             high = in_flight

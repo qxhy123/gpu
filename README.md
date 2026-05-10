@@ -159,6 +159,7 @@ gpusim run examples/vector_add/kernel.ptx \
 | 13 | ✅ done | Graphs completion: child graph nodes (nested DAG + recursive execution), memset nodes (50-cycle overhead), GraphExec.update_kernel_node_params (in-place param swap between replays), 2 metrics (graph_child_depth, graph_update_count), 3 examples (50–52), tutorials 51–53, backward compatible: Phase 1–12 unchanged |
 | 14 | ✅ done | Persistent kernels + dynamic parallelism: WorkQueue (push/pop/stop), PersistentKernel.start() drains queue, device_launch + drain_pending_child_launches, KernelLaunch +parent_kernel_id +is_persistent fields, 3 metrics (persistent_kernel_throughput, dynamic_parallelism_depth, dynamic_parallelism_fanout), 4 examples (53–56), tutorials 54–57, backward compatible: Phase 1–13 unchanged |
 | 15 | Stream Capture API + Conditional Graph Nodes | ✅ |
+| 16 | Memory Pools + Stream-Ordered Async Allocator | ✅ |
 
 ### Phase 1 ✅ — SIMT 基础
 Single SM, cycle-approximate, Hopper-shaped. PTX subset (~30 ops). Shared memory bank conflicts, global memory coalescing, regfile bank conflicts, multi-CTA occupancy.
@@ -223,6 +224,24 @@ graph_conditional_branch, graph_while_loop). **4 new tutorial chapters** (58-61)
 **100% backward compatible:** Phase 1-14 APIs unchanged; existing Phase 11
 `graph_capture_from_stream` example still works because `begin_capture()` defaults
 to `mode="global"`.
+
+### Phase 16 ✅ — Memory Pools + Stream-Ordered Async Allocator
+
+`gpusim.mempool.MemoryPool` adds a stream-ordered allocator modeled after CUDA's
+`cudaMallocAsync` family. **`pool.malloc_async(stream, n_bytes, dtype=...)`**
+returns an `Allocation` whose `.buf` is a typed numpy view that any kernel
+accepts as a buffer. **`pool.free_async(stream, allocation)`** returns the block
+to the per-stream free list — the next `malloc_async` on the same stream
+reuses it immediately (best-fit with oldest-free tiebreak). Cross-stream reuse
+requires explicit **`pool.synchronize_stream(stream)`** to promote per-stream
+free blocks into the cross-stream pool. **`pool.trim_to(release_threshold_bytes)`**
+releases fully-free slabs above the threshold back to the OS. **Convenience
+methods on Stream**: `s.malloc_async(pool, n)` and `s.free_async(pool, a)`.
+**4 trace events**: `PoolAllocate`, `PoolFree`, `PoolGrow`, `PoolTrim`.
+**4 metrics**: `pool_high_water_mark`, `pool_reuse_rate`, `pool_alloc_count`,
+`pool_release_total_bytes`. **4 examples**: `mempool_basic`,
+`mempool_multi_stream`, `mempool_fragmentation`, `mempool_train_step`.
+**4 tutorial chapters** (62-65). **100% backward compatible** with Phase 1-15.
 
 ## What's NOT modeled
 Warp shuffle, ITS, full per-cycle CTA slicing of individual grid execution (Phase 9 M1 adds cross-grid interleave; intra-grid slicing is future). See `docs/superpowers/specs/2026-05-07-gpusim-phase1-design.md` section 11.

@@ -497,12 +497,15 @@ class Stream:
         ))
 
     def record(self, ev: Event) -> None:
-        """Append a record-marker. In capture mode (Phase 15), records as event node."""
+        """Append a record-marker. In capture mode (Phase 15), records as event node;
+        in CaptureSession (M2), also registers as event source for cross-stream wait."""
         if self._captured_graph is not None:
             nid = self._captured_graph.add_event_node(event=ev, op="record")
             if self._capture_last_node is not None:
                 self._captured_graph.add_dependency(self._capture_last_node, nid)
             self._capture_last_node = nid
+            if self._capture_session is not None:
+                self._capture_session.register_event_source(id(ev), nid)
             return
         self.pending.append(_RecordMarker(event=ev))
 
@@ -511,12 +514,17 @@ class Stream:
         self.l2_window = (start_set, n_sets)
 
     def wait(self, ev: Event) -> None:
-        """Block this stream's future launches. In capture mode (Phase 15), records as event node."""
+        """Block this stream's future launches. In capture mode (Phase 15), records as event node;
+        in CaptureSession (M2), looks up the matching record node and creates cross-stream edge."""
         if self._captured_graph is not None:
             nid = self._captured_graph.add_event_node(event=ev, op="wait")
             if self._capture_last_node is not None:
                 self._captured_graph.add_dependency(self._capture_last_node, nid)
             self._capture_last_node = nid
+            if self._capture_session is not None:
+                src = self._capture_session.lookup_event_source(id(ev))
+                if src is not None and src != nid:
+                    self._captured_graph.add_dependency(src, nid)
             return
         self.event_waits.append(ev)
 

@@ -246,6 +246,19 @@ def build_perfetto(rec: Recorder) -> dict:
                      "n_steps": ev.n_steps},
         })
 
+    # Phase 11: graph launches
+    for ev in getattr(rec, "graph_launch_events", []):
+        events.append({
+            "name": f"graph_{ev.graph_id}_replay_{ev.launch_index}",
+            "cat": "graph", "ph": "X",
+            "ts": ev.start_cycle,
+            "dur": max(1, ev.end_cycle - ev.start_cycle),
+            "pid": "Graph",
+            "tid": f"graph_{ev.graph_id}",
+            "args": {"graph_id": ev.graph_id, "n_nodes": ev.n_nodes,
+                     "n_edges": ev.n_edges, "launch_index": ev.launch_index},
+        })
+
     return {"traceEvents": events, "displayTimeUnit": "ns"}
 
 

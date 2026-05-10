@@ -154,6 +154,11 @@
 {{ nvlink_heatmap_html | safe }}
 {% endif %}
 
+{% if graph_dag_html %}
+<h2>§35 Graph DAG</h2>
+{{ graph_dag_html | safe }}
+{% endif %}
+
 <script>
 Plotly.newPlot("stall_pie", {{ stall_pie_json|safe }}, {});
 Plotly.newPlot("ipc_line", {{ ipc_line_json|safe }}, {});

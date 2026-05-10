@@ -29,6 +29,11 @@ include = ["gpusim*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+norecursedirs = [
+  "*.egg", ".eggs", ".git", ".hg", ".mypy_cache", ".nox", ".tox",
+  ".venv", "venv", "{arch}", "_darcs", "buck-out", "build", "node_modules",
+  "gpusim/dist",
+]
 markers = [
   "reference: tests requiring real-GPU reference fixtures (skipped if absent)",
   "slow: tests that take > 60s and are excluded from the fast CI suite",

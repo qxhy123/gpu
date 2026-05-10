@@ -58,6 +58,9 @@ python examples/vector_add/run.py
 - **Comm.reduce_scatter (ring)** — ring reduce_scatter (N-1 NVLink transfers per rank); FSDP gradient sharding; `reduce_scatter_step_count` metric — `examples/reduce_scatter_fsdp/` + Chapter 48
 - **Comm.send + Comm.recv (blocking P2P)** — blocking point-to-point send/recv; pipeline parallel activation transfer; `NvlinkTransferEvent` per send — `examples/send_recv_pipeline_parallel/` + Chapter 49
 - **gpusim.dist module** ⭐ — PyTorch-distributed-compatible API (init_process_group, all_reduce, all_gather, reduce_scatter, broadcast, send, recv, barrier); numpy-first, torch optional via lazy import; `dist_api_call_breakdown` metric — `examples/pytorch_dist_simple/` + Chapter 50
+- **Child graph nodes (nested DAG)** — `ChildGraphNodeArgs` + `Graph.add_child_graph_node`; recursive instantiate + launch; `graph_child_depth` metric — `examples/graph_with_child/` + Chapter 51
+- **GraphExec.update_kernel_node_params** — in-place kernel param swap between replays (ptx_src / grid / block / params / kernel_name); `graph_update_count` metric — `examples/graph_update_replay/` + Chapter 52
+- **Memset nodes** — `MemsetNodeArgs` + `Graph.add_memset_node`; byte-fill + fixed 50-cycle overhead; participates in DAG dependency ordering — `examples/graph_memset_zero/` + Chapter 53
 
 ## Run a kernel and inspect the report
 ```bash
@@ -150,6 +153,7 @@ gpusim run examples/vector_add/kernel.ptx \
 | 10 | ✅ done | Multi-GPU (cfg.n_gpus), MultiGpuSystem, NVLink fabric, Comm (NCCL-equivalent): ring + tree allreduce, broadcast, allgather; 4 metrics, 2 trace events, §33/§34 HTML, Perfetto NVLink + Collective swimlanes, 4 examples (39–42), tutorials 40–43 |
 | 11 | ✅ done | CUDA Graphs: Graph builder API + 3 node types (KernelNode/MemcpyNode/EventNode), GraphExec topological sort + replay, Stream.begin_capture/end_capture, 3 metrics, 1 trace event (GraphLaunch), §35 HTML, Perfetto Graph swimlane, 4 examples (43–46), tutorials 44–47 |
 | 12 | ✅ done | NCCL completion: Comm.reduce_scatter (ring, N-1 transfers), Comm.send/recv (blocking P2P), gpusim.dist module (PyTorch-distributed-compatible API, numpy-first, torch optional), 2 metrics (reduce_scatter_step_count, dist_api_call_breakdown), 3 examples (47–49), tutorials 48–50, backward compatible: Phase 1–11 unchanged |
+| 13 | ✅ done | Graphs completion: child graph nodes (nested DAG + recursive execution), memset nodes (50-cycle overhead), GraphExec.update_kernel_node_params (in-place param swap between replays), 2 metrics (graph_child_depth, graph_update_count), 3 examples (50–52), tutorials 51–53, backward compatible: Phase 1–12 unchanged |
 
 ### Phase 1 ✅ — SIMT 基础
 Single SM, cycle-approximate, Hopper-shaped. PTX subset (~30 ops). Shared memory bank conflicts, global memory coalescing, regfile bank conflicts, multi-CTA occupancy.
@@ -186,6 +190,9 @@ Single SM, cycle-approximate, Hopper-shaped. PTX subset (~30 ops). Shared memory
 
 ### Phase 12 ✅ — NCCL Completion (reduce_scatter + send/recv + gpusim.dist)
 **Comm.reduce_scatter (ring):** `comm.reduce_scatter(send_buf, recv_buf, op)` implements the ring reduce_scatter algorithm — N-1 NVLink transfers per rank; each rank receives 1/N of the fully-reduced output. Directly models FSDP gradient sharding via `ncclReduceScatter`. **Comm.send + Comm.recv (blocking P2P):** `comm.send(buf, dst_rank)` issues a single NVLink transfer and returns the completion cycle; `comm.recv(buf, src_rank)` is a no-op (sender accounts for data movement) — API-symmetric with `torch.distributed.send/recv`. Models pipeline parallelism (GPipe / PipeDream) activation transfers. **gpusim.dist module** ⭐ — `import gpusim.dist as dist` provides a PyTorch-distributed-compatible API: `init_process_group(world_size, rank)`, `destroy_process_group()`, `get_rank()`, `get_world_size()`, `all_reduce(tensor, op)`, `all_gather(tensor_list, tensor)`, `reduce_scatter(output, input_list, op)`, `broadcast(tensor, src)`, `send(tensor, dst)`, `recv(tensor, src)`, `barrier()`. **Numpy-first, torch optional:** all functions accept `numpy.ndarray`; if PyTorch is installed, `torch.Tensor` is accepted via lazy import — no top-level `import torch`. **2 new metrics:** `reduce_scatter_step_count` (dict of n_steps → call_count, verifies N-1 ring steps), `dist_api_call_breakdown` (dict of op_name → frequency, profiles collective distribution). **3 examples (47–49):** `reduce_scatter_fsdp`, `send_recv_pipeline_parallel`, `pytorch_dist_simple`. **3 tutorial chapters (48–50). 100% backward compatible:** Phase 1–11 APIs unchanged.
+
+### Phase 13 ✅ — Graphs Completion (child graphs + update API + memset nodes)
+**Child graph nodes:** `ChildGraphNodeArgs` dataclass + `Graph.add_child_graph_node(graph=inner)` embeds an entire sub-graph as a single DAG vertex. `GraphExec.launch()` recursively instantiates and launches the child graph, accumulating its cycle cost. Models `cudaGraphAddChildGraphNode`. **GraphExec.update_kernel_node_params:** `exec.update_kernel_node_params(node_id, **kwargs)` modifies a kernel node's `ptx_src`, `grid`, `block`, `params`, or `kernel_name` in place without re-instantiating the graph — enabling param-swap between replays. Tracks call count in `exec._update_count`. Models `cudaGraphExecUpdate`. **Memset nodes:** `MemsetNodeArgs` dataclass + `Graph.add_memset_node(buf, value, n_bytes)` fills a NumPy array with a byte value and adds a fixed 50-cycle overhead per node. Participates in DAG dependency ordering just like kernel/memcpy/event nodes. Models `cudaGraphAddMemsetNode`. **2 new metrics:** `graph_child_depth` (maximum nesting depth of child graph nodes, recursive), `graph_update_count` (number of `update_kernel_node_params` calls on a `GraphExec`). **3 examples (50–52):** `graph_memset_zero`, `graph_with_child`, `graph_update_replay`. **3 tutorial chapters (51–53). 100% backward compatible:** Phase 1–12 APIs unchanged.
 
 ## What's NOT modeled
 Warp shuffle, ITS, full per-cycle CTA slicing of individual grid execution (Phase 9 M1 adds cross-grid interleave; intra-grid slicing is future). See `docs/superpowers/specs/2026-05-07-gpusim-phase1-design.md` section 11.
@@ -246,3 +253,6 @@ Read `docs/tutorial/00-intro.md` first.
 | **48** | **Ring Reduce-Scatter 与 FSDP 梯度分片 — N-1 NVLink 传输 + reduce_scatter_step_count** |
 | **49** | **阻塞 P2P send/recv 与流水线并行 — 激活值传输 + NvlinkTransferEvent + GPipe/PipeDream** |
 | **50** | **gpusim.dist PyTorch 分布式封装 ⭐ — init_process_group + all_reduce + barrier + dist_api_call_breakdown** |
+| **51** | **Child Graph 节点与嵌套 DAG — ChildGraphNodeArgs + add_child_graph_node + graph_child_depth** |
+| **52** | **Graph 更新 API 与参数替换回放 — GraphExec.update_kernel_node_params + graph_update_count** |
+| **53** | **Memset 节点 — MemsetNodeArgs + add_memset_node + 50 周期固定开销 + cudaGraphAddMemsetNode 对照** |

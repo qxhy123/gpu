@@ -436,6 +436,7 @@ class Stream:
     _captured_graph: object | None = None     # NEW Phase 11
     _capture_last_node: int | None = None     # NEW Phase 11
     _recorder: object | None = None    # NEW Phase 15 — for capture trace events
+    _capture_session: object | None = None    # NEW Phase 15
 
     def __post_init__(self):
         if self.priority not in ("high", "normal", "low"):

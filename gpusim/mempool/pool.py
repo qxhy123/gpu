@@ -68,6 +68,13 @@ class MemoryPool:
         self.in_flight_bytes += block.n_bytes
         if self.in_flight_bytes > self.high_water_mark:
             self.high_water_mark = self.in_flight_bytes
+
+        if self._recorder is not None:
+            self._recorder.pool_allocate(
+                pool_id=self._pool_id, stream_id=sid,
+                n_bytes=block.n_bytes, ptr_id=ptr_id, reused=reused,
+                cycle=0,
+            )
         return alloc
 
     def free_async(self, stream, allocation) -> None:
@@ -80,6 +87,12 @@ class MemoryPool:
             freed_at_count=self._free_counter,
         ))
         self.in_flight_bytes -= allocation.n_bytes
+        if self._recorder is not None:
+            self._recorder.pool_free(
+                pool_id=self._pool_id, stream_id=sid,
+                ptr_id=allocation.ptr_id, n_bytes=allocation.n_bytes,
+                cycle=0,
+            )
 
     def synchronize_stream(self, stream) -> None:
         """Promote all per-stream free blocks for this stream into the cross-stream pool.
@@ -141,4 +154,8 @@ class MemoryPool:
         self.slabs.append(bytearray(n_bytes))
         self.slab_n_bytes.append(n_bytes)
         self.slab_in_use_bytes.append(0)
+        if self._recorder is not None:
+            self._recorder.pool_grow(
+                pool_id=self._pool_id, n_bytes_added=n_bytes, cycle=0,
+            )
         return slab_idx

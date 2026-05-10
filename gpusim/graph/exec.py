@@ -69,6 +69,37 @@ class GraphExec:
                 a = node.child_graph_args
                 child_exec = a.graph.instantiate(self.config)
                 total_cycles += child_exec.launch()
+            elif node.type == "conditional":
+                a = node.conditional_args
+                taken = bool(a.cond_fn())
+                if self._recorder is not None:
+                    self._recorder.conditional_branch(
+                        node_id=node.node_id, taken=taken, cycle=total_cycles,
+                    )
+                chosen = a.true_graph if taken else a.false_graph
+                if len(chosen.nodes) > 0:
+                    child_exec = chosen.instantiate(self.config)
+                    total_cycles += child_exec.launch()
+                total_cycles += 5    # conditional eval overhead
+            elif node.type == "while":
+                a = node.while_args
+                iteration = 0
+                while a.cond_fn():
+                    if iteration >= a.max_iterations:
+                        raise RuntimeError(
+                            f"while node {node.node_id} exceeded "
+                            f"max_iterations={a.max_iterations}"
+                        )
+                    if self._recorder is not None:
+                        self._recorder.loop_iteration(
+                            node_id=node.node_id, iteration=iteration,
+                            cycle=total_cycles,
+                        )
+                    if len(a.body_graph.nodes) > 0:
+                        child_exec = a.body_graph.instantiate(self.config)
+                        total_cycles += child_exec.launch()
+                    iteration += 1
+                total_cycles += 5    # final cond_fn eval overhead
         if self._recorder is not None:
             self._recorder.graph_launch(
                 graph_id=self._graph_id,

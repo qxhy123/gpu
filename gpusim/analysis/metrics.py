@@ -779,3 +779,39 @@ def dynamic_parallelism_fanout(kernel_launch_df) -> dict:
         if pid >= 0:
             out[pid] = out.get(pid, 0) + 1
     return out
+
+
+# --- Phase 15 metrics ---
+
+def stream_capture_count(recorder) -> int:
+    """Phase 15: Number of distinct captured graphs in this trace
+    (counts StreamCaptureEnd events)."""
+    return len(getattr(recorder, "stream_capture_end_events", []))
+
+
+def captured_node_count(recorder) -> int:
+    """Phase 15: Total nodes added across all stream-captured graphs in this trace."""
+    return sum(
+        ev.captured_node_count
+        for ev in getattr(recorder, "stream_capture_end_events", [])
+    )
+
+
+def conditional_branch_taken_count(recorder) -> int:
+    """Phase 15: Number of conditional-node evaluations that took the true branch."""
+    return sum(
+        1 for ev in getattr(recorder, "conditional_branch_events", [])
+        if ev.taken
+    )
+
+
+def avg_loop_iterations(recorder) -> float:
+    """Phase 15: Mean iteration count across all while-nodes in the trace.
+    Returns 0.0 if no while-nodes were executed."""
+    events = getattr(recorder, "loop_iteration_events", [])
+    if not events:
+        return 0.0
+    per_node = {}
+    for ev in events:
+        per_node[ev.node_id] = per_node.get(ev.node_id, 0) + 1
+    return sum(per_node.values()) / len(per_node)

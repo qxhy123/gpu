@@ -433,14 +433,40 @@ class Stream:
     priority: str = "normal"    # NEW Phase 8 — "high" | "normal" | "low"
     event_waits: list = field(default_factory=list)    # NEW Phase 8 — Events this stream is waiting on
     l2_window: tuple | None = None     # NEW Phase 8 — (start_set, n_sets)
+    _captured_graph: object | None = None     # NEW Phase 11
+    _capture_last_node: int | None = None     # NEW Phase 11
 
     def __post_init__(self):
         if self.priority not in ("high", "normal", "low"):
             raise ValueError(f"priority must be high/normal/low, got {self.priority!r}")
 
+    def begin_capture(self) -> None:
+        """Start recording subsequent .launch into a fresh Graph. Phase 11."""
+        from gpusim.graph.graph import Graph
+        self._captured_graph = Graph()
+        self._capture_last_node = None
+
+    def end_capture(self) -> "Graph":
+        """Stop capture; return the recorded Graph. Phase 11."""
+        g = self._captured_graph
+        self._captured_graph = None
+        self._capture_last_node = None
+        return g
+
     def launch(self, ptx_src: str, grid: tuple, block: tuple,
                params: dict, *, kernel_name: str = "<unnamed>",
                config=None) -> None:
+        # NEW Phase 11: capture mode
+        if self._captured_graph is not None:
+            nid = self._captured_graph.add_kernel_node(
+                ptx_src=ptx_src, grid=grid, block=block, params=params,
+                kernel_name=kernel_name,
+            )
+            if self._capture_last_node is not None:
+                self._captured_graph.add_dependency(self._capture_last_node, nid)
+            self._capture_last_node = nid
+            return
+        # Existing Phase 7-10 behavior:
         self.pending.append(GridLaunch(
             ptx_src=ptx_src, kernel_name=kernel_name,
             grid=grid, block=block, params=params, config=config,

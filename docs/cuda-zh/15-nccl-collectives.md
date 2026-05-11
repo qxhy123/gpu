@@ -215,7 +215,7 @@ BW_effective = 2(N-1)/N × B_NVLink
 
 跨节点的 NCCL 通信同时使用 NVLink(机箱内 GPU 间)和 InfiniBand(机箱间网络)。NCCL 通过内部的多级 allreduce 策略处理这种混合拓扑:先在每个节点内使用 NVLink 做 intra-node allreduce,再通过 InfiniBand 做 inter-node allreduce,最后再在节点内做 broadcast。这种两级策略减少了需要经过 InfiniBand 的数据量,充分利用了 NVLink 的高带宽。配合 SHARP over InfiniBand(HDR/NDR)的网内归约,两级 SHARP 可以在节点内和节点间都利用硬件加速,进一步减少跨节点通信量。
 
-**AllReduce latency(小消息):** 在 8 GPU NVSwitch 全连接系统中,4 KB 消息的 AllReduce 延迟约 20~30 µs(SHARP),ring 约 50~80 µs。
+**AllReduce latency(小消息):** 在 8 GPU NVSwitch 全连接系统中,4 KB 消息的 AllReduce 延迟约 20~30 µs(SHARP),ring 约 50~80 µs。在 64 GPU 跨节点场景下,同等消息量(4 KB)经 InfiniBand HDR 的 AllReduce 延迟约 80~120 µs(无 SHARP),使用 InfiniBand SHARP 可降至约 40~60 µs。这一跨节点延迟差距解释了为何在每步需要频繁同步小张量(如 loss scalar、batch statistics)的场景中,节点内 TP 和节点间 DP 的通信策略选择对总体训练效率有显著影响——节点内通过 NVLink 完成小消息同步速度比节点间 InfiniBand 快约 3~5 倍,因此将需要频繁同步的操作尽量限制在节点内是降低通信延迟的重要原则。
 
 ## 5. 代码示例
 

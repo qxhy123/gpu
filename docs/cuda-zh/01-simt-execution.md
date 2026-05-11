@@ -272,6 +272,8 @@ smsp__warp_issue_stalled_barrier_per_warp_active.pct \
 
 ## 8. 延伸阅读
 
+理解 SIMT 执行模型是掌握后续所有章节的基础。warp 的锁步执行特性决定了为什么 SMEM bank conflict 代价如此高昂(第 3 章)、为什么 Tensor Core 的 wgmma 指令以 warp-group 粒度发射(第 8 章)、为什么 mbarrier 相位同步以 warp 为单位感知完成(第 10 章)。从 SIMT 的视角重新审视这些概念,有助于在面对新的性能问题时快速判断瓶颈所在——是 warp 利用率不足、是分支 divergence 导致活跃 lane 减少,还是 coalescing 不佳导致 L2/HBM 事务数爆炸。掌握 warp 的执行状态机和 ITS 语义,是成为熟练 CUDA 工程师的必经之路。
+
 - CUDA C++ Programming Guide § 5.4.4 — *SIMT Architecture*([https://docs.nvidia.com/cuda/cuda-c-programming-guide/#simt-architecture](https://docs.nvidia.com/cuda/cuda-c-programming-guide/#simt-architecture))
 - CUDA C++ Programming Guide § 7.14 — *Warp Shuffle Functions*([https://docs.nvidia.com/cuda/cuda-c-programming-guide/#warp-shuffle-functions](https://docs.nvidia.com/cuda/cuda-c-programming-guide/#warp-shuffle-functions))
 - PTX ISA § 8 — *SIMT Stack*([https://docs.nvidia.com/cuda/parallel-thread-execution/#simt-stack](https://docs.nvidia.com/cuda/parallel-thread-execution/#simt-stack))

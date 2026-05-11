@@ -15,6 +15,10 @@
 - **按硬件层级(自底向上):** 02 SM 内部结构 → 01 SIMT 执行模型 → 03 共享内存+L1 → 04 L2 缓存 → 05 HBM3 全局内存 → 07 Tensor Core → 08 wgmma → 09 TMA → 10 mbarrier → 11 Cluster → 14 NVLink。适合希望先理解硬件再学 API 的读者。
 - **按软件抽象层(自顶向下):** 01 SIMT → 12 CTA 调度 → 13 Streams → 16 CUDA Graphs → 17 持久化 → 18 内存分配器 → 19 统一内存 → 20 Driver API → 21 Profiling → 22 PTX→SASS 编译链。适合已有 CUDA 使用经验、希望系统化提升调优能力的读者。
 
+**3. 训练 / 推理实战路径(读完任何基础后)**
+
+熟悉硬件层级 / 软件抽象层任一路径后,直接读 [23 模型训练全栈串联](23-training-end-to-end.md) 与 [24 模型推理全栈串联](24-inference-end-to-end.md) 看一次 step 如何调度前 22 章的全部组件,以及训练 / 推理两侧的优化方法体系。
+
 每章独立可读,章内的前置概念用一句话回顾。读者可依据需求选取单章深读。全套教程仅覆盖 Hopper SM90 及 CUDA 12,不回顾 Pascal/Volta/Turing/Ampere 的历史细节,必要时会在 Tensor Core 演进等处简要提及。
 
 ## 2. 硬件视角(微架构细节)
@@ -237,6 +241,8 @@ nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.width.current --format=cs
 | [20 · CUDA Driver API](20-cuda-driver-api.md) | `20-cuda-driver-api.md` | context 模型、Module 加载、cuLaunchKernel |
 | [21 · Profiling 工具栈](21-profiling-toolchain.md) | `21-profiling-toolchain.md` | NSight Systems/Compute、CUPTI、NVTX 工作流 |
 | [22 · PTX → SASS 编译链](22-ptx-to-sass.md) | `22-ptx-to-sass.md` | nvcc pipeline、ptxas flags、cuobjdump、JIT |
+| [23](23-training-end-to-end.md) | 模型训练全栈串联 | training step 端到端 + 优化方法体系 |
+| [24](24-inference-end-to-end.md) | 模型推理全栈串联 | prefill/decode 端到端 + 优化方法体系 |
 
 ### 官方文档参考
 

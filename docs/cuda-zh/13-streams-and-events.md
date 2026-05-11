@@ -240,7 +240,7 @@ NCCL 内部广泛使用 `cudaEventDisableTiming` event 进行 stream 间同步,�
 - 有 overlap(正确配置 stream + event):有效通信等待时间降低到约 8 ms
 - 总 step 时间从约 130 ms 降低到约 93 ms,MFU 从约 42% 提升到约 58%
 
-这一数字说明 stream 并发在大规模训练中的实际收益是系统级的,而不只是局部优化。
+这一数字说明 stream 并发在大规模训练中的实际收益是系统级的,而不只是局部优化。要达到这一效果,需要确保计算 stream 和通信 stream 之间使用 `cudaEventRecord` + `cudaStreamWaitEvent` 建立精确依赖关系:backward 完成后向通信 stream 发出信号,通信 stream 开始 allreduce,同时计算 stream 继续向前推进下一层的 backward 计算。两流并发的前提是 GPU 上同时有足够的工作填满 SM——若 backward kernel 本身已跑满 SM,则通信 kernel 即使在不同 stream 上也难以真正并发执行,此时应考虑适当降低 batch size 或拆分 allreduce bucket,为通信 kernel 留出 SM 资源。
 
 ## 5. 代码示例
 

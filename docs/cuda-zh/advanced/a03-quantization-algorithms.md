@@ -25,7 +25,7 @@ flowchart LR
     subgraph GPTQ["GPTQ：Hessian 最优舍入"]
         G1[校准数据集\n前向传播] --> G2[计算权重\nHessian 矩阵 H]
         G2 --> G3[Cholesky 分解\nH = LL^T，数值稳定]
-        G3 --> G4[逐列量化\n选最优舍入 Q(w)]
+        G3 --> G4["逐列量化\n选最优舍入 Q(w)"]
         G4 --> G5[用 H^-1 传播\n量化误差到后续列]
         G5 --> G6[INT4 权重\n+ FP16 激活]
     end
@@ -36,7 +36,7 @@ flowchart LR
         A4 --> A5[混合精度权重\n显著列 FP16 + 其余 INT4]
     end
     subgraph SQ["SmoothQuant：通道迁移"]
-        S1[校准数据集\n统计激活通道最大值] --> S2[计算迁移因子 s\ns_i = max_x_i^α / max_w_i^{1-α}]
+        S1[校准数据集\n统计激活通道最大值] --> S2["计算迁移因子 s\ns_i = max_x_i^α / max_w_i^{1-α}"]
         S2 --> S3[激活除以 s\nY = X/s·sW]
         S3 --> S4[激活幅度变小\n权重幅度变大但均匀]
         S4 --> S5[INT8 量化\n激活 + 权重均可量化]

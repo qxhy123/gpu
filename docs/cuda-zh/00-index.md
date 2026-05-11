@@ -406,6 +406,23 @@ nvidia-smi --query-gpu=pcie.link.gen.current,pcie.link.width.current --format=cs
 | **调度与并发** | 13 Streams、16 CUDA Graph、17 持久化 kernel、14 NVLink、15 NCCL | stream 重叠、Graph capture、多 GPU 通信 |
 | **工具与编译** | 18 内存池、19 UM、20 Driver API、21 Profiling、22 PTX→SASS | 分配器、context 模型、ncu workflow、ptxas |
 
+### 进阶专题(advanced/)
+
+适合 senior AI Infra,真实生产中常卡壳的 10 个深度主题。
+
+| # | 标题 | 主题 |
+|---|---|---|
+| [a01](advanced/a01-moe-expert-parallelism.md) | MoE + Expert Parallelism | Mixtral/DeepSeek-V3 训推 + DeepEP/Megablocks |
+| [a02](advanced/a02-cutlass-3x-and-cute.md) | CUTLASS 3.x + CuTe Layout | collective mainloop + Layout 代数 |
+| [a03](advanced/a03-quantization-algorithms.md) | 量化算法原理 | GPTQ / AWQ / SmoothQuant / FP8 scaling |
+| [a04](advanced/a04-triton-kernel-engineering.md) | Triton 工程化 | compiler stack + autotune + torch.compile |
+| [a05](advanced/a05-rdma-nccl-transport.md) | RDMA + NCCL transport | NDR 400G IB + GDR + rail-optimized |
+| [a06](advanced/a06-fault-tolerance-and-sdc.md) | 训练可靠性 + SDC | AFR + DCP async + loss spike debug |
+| [a07](advanced/a07-data-pipeline-engineering.md) | 数据流水线工程化 | DALI/FFCV/Ray Data + GPU-side decode |
+| [a08](advanced/a08-cudnn-cublas-advanced.md) | cuDNN/cuBLAS/cuBLASLt 高级 | algorithm heuristic + backend graph |
+| [a09](advanced/a09-blackwell-b200-gb200.md) | Blackwell B200 / GB200 NVL72 | 2nd gen TE + FP4 + 5th gen NVLink |
+| [a10](advanced/a10-mig-confidential-vgpu.md) | MIG + confidential + vGPU | 多租户 + SEV-SNP + 容器化 |
+
 ### 官方文档参考
 
 - **CUDA C++ Programming Guide** — [https://docs.nvidia.com/cuda/cuda-c-programming-guide/](https://docs.nvidia.com/cuda/cuda-c-programming-guide/)

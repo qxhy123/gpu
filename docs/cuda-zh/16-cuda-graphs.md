@@ -241,7 +241,7 @@ for data, label in dataloader:
 | ~5000 节点 | ~400 ms | ~20 µs |
 | ~10000 节点 | ~1000+ ms | ~50 µs |
 
-对于超大模型(如 70B 参数),单个 forward pass 的 kernel 数量可能超过 5000,graph instantiate 需要约 400~800 ms。这通常可以接受(只做一次),但需要在系统启动时预留足够时间,并考虑设置合理的请求超时时间以避免 instantiate 期间的请求丢失。
+对于超大模型(如 70B 参数),单个 forward pass 的 kernel 数量可能超过 5000,graph instantiate 需要约 400~800 ms。这通常可以接受(只做一次),但需要在系统启动时预留足够时间,并考虑设置合理的请求超时时间以避免 instantiate 期间的请求丢失。减小 graph 节点数量的有效手段是在 capture 前使用 `torch.compile` 或手动算子融合,将多个细粒度 kernel 合并为单一 kernel:compile 通常可将 Transformer 一层的 kernel 数从 50+ 降低到 10 以内,使 instantiate 时间从数百毫秒降低到 20~50 ms,graph update 也更快。这一融合+graph 的组合策略是生产推理引擎中的常见模式。
 
 ## 5. 代码示例
 

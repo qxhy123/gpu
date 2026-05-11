@@ -205,7 +205,7 @@ CUTLASS 3.x sm90 persistent GEMM(BF16,M=N=K=4096,H100 SXM5):
 
 DP 支持的递归嵌套深度默认最大为 24 层。超过时,新的 child launch 会失败并返回 `cudaErrorDeviceRuntimeLaunchExceeded`。实际应用中超过 5~6 层递归就需要重新考虑算法结构。
 
-对于树形递归算法(如快速排序、k-d 树构建),递归深度与输入规模成对数关系。输入规模 N = 10^6 时,理想情况下递归深度约为 log2(10^6) ≈ 20 层,接近 DP 的 24 层限制,且最后几层的 child kernel 数量呈指数增长(第 20 层最多 2^20 ≈ 1M 个 child),远超 pending launch 队列上限。实际工程中,通常在递归深度达到 4~6 层时切换为"迭代 + 工作队列"方式:把剩余的子问题推入队列,由 persistent kernel 迭代处理,而非继续递归。这种混合策略结合了 DP 的表达便利和 persistent kernel 的可扩展性。
+对于树形递归算法(如快速排序、k-d 树构建),递归深度与输入规模成对数关系。输入规模 N = 10^6 时,理想情况下递归深度约为 log2(10^6) ≈ 20 层,接近 DP 的 24 层限制,且最后几层的 child kernel 数量呈指数增长(第 20 层最多 2^20 ≈ 1M 个 child),远超 pending launch 队列上限。实际工程中,通常在递归深度达到 4~6 层时切换为"迭代 + 工作队列"方式:把剩余的子问题推入队列,由 persistent kernel 迭代处理,而非继续递归。这种混合策略结合了 DP 的表达便利和 persistent kernel 的可扩展性。另一个实用做法是使用 CUDA cooperative groups 的 `grid.sync()` 在单个 kernel 内实现多轮迭代:parent kernel 执行第一轮计算,通过 `grid.sync()` 同步所有 SM,再执行第二轮——整个过程无需设备侧 launch,避免了 DP 的 10~20 µs child launch 延迟。对于深度固定的树形算法(如固定层数的 B-tree 查找),cooperative groups 方案比 DP 的性能通常高 30~50%。
 
 **SM 资源竞争与优先级流的无效性**
 
